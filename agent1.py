@@ -33,7 +33,6 @@ HTTPXClientInstrumentor().instrument()  # patches httpx.AsyncClient / httpx.Clie
 TOOL_SERVER_URL = os.environ.get("TOOL_SERVER_URL", "http://127.0.0.1:9000/mcp")
 AGENT2_URL = os.environ.get("AGENT2_URL", "http://127.0.0.1:9002/lookup")
 
-
 @app.post("/run-task")
 async def run_task():
     results = {}

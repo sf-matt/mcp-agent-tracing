@@ -4,6 +4,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mcp-tool-server
+  namespace: mcp-agent-tracing
 spec:
   replicas: 1
   selector:
@@ -16,11 +17,14 @@ spec:
         - name: mcp-tool-server
           image: sfmatt/mcp-tool-server:latest
           ports: [{containerPort: 9000}]
+          env:
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: mcp-tool-server
+  namespace: mcp-agent-tracing
 spec:
   selector: {app: mcp-tool-server}
   ports: [{port: 9000, targetPort: 9000}]
@@ -29,6 +33,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: agent2
+  namespace: mcp-agent-tracing
 spec:
   replicas: 1
   selector:
@@ -41,11 +46,14 @@ spec:
         - name: agent2
           image: sfmatt/agent2:latest
           ports: [{containerPort: 9002}]
+          env:
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: agent2
+  namespace: mcp-agent-tracing
 spec:
   selector: {app: agent2}
   ports: [{port: 9002, targetPort: 9002}]
@@ -54,6 +62,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: agent1
+  namespace: mcp-agent-tracing
 spec:
   replicas: 1
   selector:
@@ -71,11 +80,13 @@ spec:
             # that has to change between local docker-compose and k8s.
             - {name: TOOL_SERVER_URL, value: "http://mcp-tool-server:9000/mcp"}
             - {name: AGENT2_URL, value: "http://agent2:9002/lookup"}
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: agent1
+  namespace: mcp-agent-tracing
 spec:
   selector: {app: agent1}
   ports: [{port: 9001, targetPort: 9001}]

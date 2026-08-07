@@ -1,0 +1,51 @@
+# Requires the "mcp-agent-tracing" namespace (k8s/namespace.yaml) to exist first.
+# Requires a Secret named "groundcover-token" with key "token", created out-of-band:
+#   kubectl create secret generic groundcover-token --from-literal=token='<your-groundcover-token>' -n mcp-agent-tracing
+# Requires the ConfigMap "otel-collector-config" to exist, created from otel-collector-config.yaml:
+#   kubectl create configmap otel-collector-config --from-file=config.yaml=otel-collector-config.yaml -n mcp-agent-tracing
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: mcp-agent-tracing
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: otel-collector}
+  template:
+    metadata:
+      labels: {app: otel-collector}
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.96.0
+          args: ["--config=/etc/otelcol-contrib/config.yaml"]
+          ports:
+            - {containerPort: 4317}
+            - {containerPort: 4318}
+          env:
+            - name: GROUNDCOVER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: groundcover-token
+                  key: token
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otelcol-contrib/config.yaml
+              subPath: config.yaml
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: mcp-agent-tracing
+spec:
+  selector: {app: otel-collector}
+  ports:
+    - {name: otlp-grpc, port: 4317, targetPort: 4317}
+    - {name: otlp-http, port: 4318, targetPort: 4318}

@@ -1,15 +1,29 @@
 version: "3.8"
 services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
+    environment:
+      GROUNDCOVER_TOKEN: "${GROUNDCOVER_TOKEN:-}"
+    ports: ["4317:4317", "4318:4318"]
   mcp-tool-server:
     build:
       context: .
       dockerfile: Dockerfile.mcp-tool-server
     ports: ["9000:9000"]
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+    depends_on: [otel-collector]
   agent2:
     build:
       context: .
       dockerfile: Dockerfile.agent2
     ports: ["9002:9002"]
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+    depends_on: [otel-collector]
   agent1:
     build:
       context: .
@@ -18,4 +32,5 @@ services:
     environment:
       TOOL_SERVER_URL: "http://mcp-tool-server:9000/mcp"
       AGENT2_URL: "http://agent2:9002/lookup"
-    depends_on: [mcp-tool-server, agent2]
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+    depends_on: [mcp-tool-server, agent2, otel-collector]

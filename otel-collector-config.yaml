@@ -1,0 +1,44 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+  resource/groundcover:
+    attributes:
+      - key: cluster
+        value: mcp-agent-tracing-demo
+        action: insert
+      - key: env
+        value: demo
+        action: insert
+
+exporters:
+  debug:
+    verbosity: detailed
+
+  otlphttp/groundcover:
+    endpoint: https://experiments.platform-dev.grcv.io
+    headers:
+      Authorization: ${env:GROUNDCOVER_TOKEN}
+    compression: gzip
+    timeout: 30s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [resource/groundcover, batch]
+      exporters: [debug, otlphttp/groundcover]

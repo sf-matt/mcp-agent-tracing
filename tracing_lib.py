@@ -1,16 +1,19 @@
 """
 Shared tracing setup for agent1, agent2, and the MCP tool server.
 
-Spans are written to a JSON-lines file per process rather than stdout, so
-they can be compared after the fact to check whether trace_ids match
-across processes, without needing a running collector.
+Default export target is OTLP (OTEL_EXPORTER_OTLP_ENDPOINT), pointed at
+the in-cluster/in-compose otel-collector, which forwards to groundcover.
+If that env var isn't set, falls back to writing spans to a JSON-lines
+file per process -- useful for local debugging without a collector
+running, and for comparing trace_ids across processes by hand.
 """
 
 import json
+import os
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanExporter, SpanExportResult
 
 
 class JsonFileExporter(SpanExporter):
@@ -39,7 +42,17 @@ class JsonFileExporter(SpanExporter):
 def setup_tracing(service_name: str, output_path: str):
     """Call once per process. Returns a tracer."""
     provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
-    provider.add_span_processor(SimpleSpanProcessor(JsonFileExporter(output_path)))
+
+    otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if otlp_endpoint:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{otlp_endpoint}/v1/traces")))
+    else:
+        provider.add_span_processor(SimpleSpanProcessor(JsonFileExporter(output_path)))
+
+    if otlp_endpoint and os.environ.get("SPAN_FILE_DEBUG"):
+        provider.add_span_processor(SimpleSpanProcessor(JsonFileExporter(output_path)))
+
     trace.set_tracer_provider(provider)
     tracer = trace.get_tracer(service_name)
     return tracer

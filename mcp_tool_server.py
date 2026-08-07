@@ -1,7 +1,5 @@
 """
-MCP tool server, running on real HTTP transport (not stdio -- we dropped
-stdio so all traffic in this demo is genuine network calls, matching what
-eBPF would later observe on the wire).
+MCP tool server, running on real HTTP transport (not stdio out for more realism).
 
 Bare OTel only for step 1: no manual spans, no OpenLLMetry. Whatever
 telemetry we get here comes entirely from auto-instrumenting the HTTP
