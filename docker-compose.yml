@@ -7,6 +7,8 @@ services:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
     environment:
       GROUNDCOVER_TOKEN: "${GROUNDCOVER_TOKEN:-}"
+      GC_CLUSTER: "${GC_CLUSTER:-matthew-local}"
+      GC_ENV: "${GC_ENV:-local}"
     ports: ["4317:4317", "4318:4318"]
   mcp-tool-server:
     build:

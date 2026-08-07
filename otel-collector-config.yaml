@@ -14,10 +14,10 @@ processors:
   resource/groundcover:
     attributes:
       - key: cluster
-        value: mcp-agent-tracing-demo
+        value: ${env:GC_CLUSTER}
         action: insert
       - key: env
-        value: demo
+        value: ${env:GC_ENV}
         action: insert
 
 exporters:

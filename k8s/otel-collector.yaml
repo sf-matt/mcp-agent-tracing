@@ -4,6 +4,15 @@
 # Requires the ConfigMap "otel-collector-config" to exist, created from otel-collector-config.yaml:
 #   kubectl create configmap otel-collector-config --from-file=config.yaml=otel-collector-config.yaml -n mcp-agent-tracing
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-env
+  namespace: mcp-agent-tracing
+data:
+  GC_CLUSTER: matthew-local
+  GC_ENV: local
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,6 +33,9 @@ spec:
           ports:
             - {containerPort: 4317}
             - {containerPort: 4318}
+          envFrom:
+            - configMapRef:
+                name: otel-collector-env
           env:
             - name: GROUNDCOVER_TOKEN
               valueFrom:
