@@ -1,4 +1,6 @@
 # Update sfmatt below before applying.
+# Requires a Secret named "anthropic-api-key" with key "key", created out-of-band:
+#   kubectl create secret generic anthropic-api-key --from-literal=key='<your-anthropic-key>' -n mcp-agent-tracing
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -81,6 +83,9 @@ spec:
             - {name: TOOL_SERVER_URL, value: "http://mcp-tool-server:9000/mcp"}
             - {name: AGENT2_URL, value: "http://agent2:9002/lookup"}
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef: {name: anthropic-api-key, key: key}
 ---
 apiVersion: v1
 kind: Service
@@ -89,4 +94,40 @@ metadata:
   namespace: mcp-agent-tracing
 spec:
   selector: {app: agent1}
+  ports: [{port: 9001, targetPort: 9001}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent1-openllmetry
+  namespace: mcp-agent-tracing
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: agent1-openllmetry}
+  template:
+    metadata:
+      labels: {app: agent1-openllmetry}
+    spec:
+      containers:
+        - name: agent1-openllmetry
+          image: sfmatt/agent1:latest
+          ports: [{containerPort: 9001}]
+          env:
+            - {name: TOOL_SERVER_URL, value: "http://mcp-tool-server:9000/mcp"}
+            - {name: AGENT2_URL, value: "http://agent2:9002/lookup"}
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
+            - {name: ENABLE_OPENLLMETRY, value: "1"}
+            - {name: SERVICE_NAME, value: "agent-1-openllmetry"}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef: {name: anthropic-api-key, key: key}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent1-openllmetry
+  namespace: mcp-agent-tracing
+spec:
+  selector: {app: agent1-openllmetry}
   ports: [{port: 9001, targetPort: 9001}]

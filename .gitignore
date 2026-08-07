@@ -4,3 +4,4 @@ __pycache__/
 spans_*.jsonl
 .DS_Store
 mnt/
+.env

@@ -7,3 +7,5 @@ opentelemetry-sdk==1.44.*
 opentelemetry-instrumentation-fastapi
 opentelemetry-instrumentation-httpx
 opentelemetry-exporter-otlp-proto-http==1.44.*
+anthropic==0.121.*
+traceloop-sdk==0.62.*

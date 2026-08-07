@@ -6,6 +6,14 @@ the in-cluster/in-compose otel-collector, which forwards to groundcover.
 If that env var isn't set, falls back to writing spans to a JSON-lines
 file per process -- useful for local debugging without a collector
 running, and for comparing trace_ids across processes by hand.
+
+ENABLE_OPENLLMETRY layers OpenLLMetry (traceloop-sdk) onto the SAME
+TracerProvider set up below, rather than a separate one: Traceloop.init()
+checks the current global TracerProvider, and if it's already a real one
+(not the default ProxyTracerProvider), it attaches its own span processor
+to that existing provider instead of creating a new one. Passing our own
+OTLPSpanExporter into Traceloop.init(exporter=...) also stops it from
+defaulting to Traceloop's own SaaS endpoint.
 """
 
 import json
@@ -55,4 +63,13 @@ def setup_tracing(service_name: str, output_path: str):
 
     trace.set_tracer_provider(provider)
     tracer = trace.get_tracer(service_name)
+
+    if os.environ.get("ENABLE_OPENLLMETRY") and otlp_endpoint:
+        from traceloop.sdk import Traceloop
+        Traceloop.init(
+            app_name=service_name,
+            exporter=OTLPSpanExporter(endpoint=f"{otlp_endpoint}/v1/traces"),
+            telemetry_enabled=False,
+        )
+
     return tracer

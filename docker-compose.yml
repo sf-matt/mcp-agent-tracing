@@ -35,4 +35,21 @@ services:
       TOOL_SERVER_URL: "http://mcp-tool-server:9000/mcp"
       AGENT2_URL: "http://agent2:9002/lookup"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      FAKE_LLM: "${FAKE_LLM:-}"
+    depends_on: [mcp-tool-server, agent2, otel-collector]
+  agent1-openllmetry:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent1
+    ports: ["9011:9001"]
+    environment:
+      TOOL_SERVER_URL: "http://mcp-tool-server:9000/mcp"
+      AGENT2_URL: "http://agent2:9002/lookup"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      FAKE_LLM: "${FAKE_LLM:-}"
+      ENABLE_OPENLLMETRY: "1"
+      SERVICE_NAME: "agent-1-openllmetry"
+      SPAN_FILE: "spans_agent1_openllmetry.jsonl"
     depends_on: [mcp-tool-server, agent2, otel-collector]
