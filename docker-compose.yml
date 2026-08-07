@@ -1,0 +1,21 @@
+version: "3.8"
+services:
+  mcp-tool-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp-tool-server
+    ports: ["9000:9000"]
+  agent2:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent2
+    ports: ["9002:9002"]
+  agent1:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent1
+    ports: ["9001:9001"]
+    environment:
+      TOOL_SERVER_URL: "http://mcp-tool-server:9000/mcp"
+      AGENT2_URL: "http://agent2:9002/lookup"
+    depends_on: [mcp-tool-server, agent2]

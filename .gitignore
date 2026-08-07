@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+spans_*.jsonl
+.DS_Store
+mnt/
