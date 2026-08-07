@@ -22,6 +22,7 @@ bare OTel would otherwise produce. Confirmed by testing both.
 """
 
 import json
+import logging
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -78,6 +79,7 @@ else:
 @app.post("/run-task")
 async def run_task():
     results = {}
+    logging.info("run_task started")
 
     # --- agent-to-tool: real MCP call over streamable HTTP ---
     async with streamable_http_client(TOOL_SERVER_URL) as (read, write):
@@ -85,11 +87,13 @@ async def run_task():
             await session.initialize()
             tool_result = await session.call_tool("lookup_price", arguments={"sku": "SKU-4471"})
             results["tool_call"] = str(tool_result.content)
+    logging.info("tool call complete: %s", results["tool_call"])
 
     # --- agent-to-agent: plain HTTP call to agent-2 ---
     async with httpx.AsyncClient() as client:
         resp = await client.post(AGENT2_URL, json={"query": "SKU-4471 in stock?"})
         results["agent2_call"] = resp.json()
+    logging.info("agent2 call complete: %s", results["agent2_call"])
 
     # --- agent-to-LLM: real Anthropic call summarizing the tool result ---
     message = await anthropic_client.messages.create(
@@ -98,6 +102,7 @@ async def run_task():
         messages=[{"role": "user", "content": f"In one short sentence, summarize this: {results['tool_call']}"}],
     )
     results["llm_summary"] = message.content[0].text
+    logging.info("llm call complete: %s", results["llm_summary"])
 
     return results
 

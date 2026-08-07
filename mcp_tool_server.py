@@ -6,6 +6,7 @@ telemetry we get here comes entirely from auto-instrumenting the HTTP
 layer -- FastAPI/Starlette server-side, and MCP's own internal handling.
 """
 
+import logging
 import os
 from mcp.server.mcpserver import MCPServer
 
@@ -19,6 +20,7 @@ mcp = MCPServer("pricing-tool-server")
 @mcp.tool()
 def lookup_price(sku: str) -> dict:
     """Look up the price for a given SKU. Pure business logic, no manual tracing code."""
+    logging.info("lookup_price called for sku=%s", sku)
     return {"sku": sku, "price_usd": 42.00}
 
 

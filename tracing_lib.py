@@ -14,11 +14,20 @@ checks the current global TracerProvider, and if it's already a real one
 to that existing provider instead of creating a new one. Passing our own
 OTLPSpanExporter into Traceloop.init(exporter=...) also stops it from
 defaulting to Traceloop's own SaaS endpoint.
+
+Logs (when OTEL_EXPORTER_OTLP_ENDPOINT is set) go through the OTel SDK's
+LoggingHandler, bridging Python's stdlib logging to an OTLP log exporter.
+LogRecord construction pulls trace_id/span_id from whatever span is
+currently active, so log lines emitted during a request auto-correlate
+with that request's trace -- no extra wiring needed.
 """
 
 import json
+import logging
 import os
-from opentelemetry import trace
+from opentelemetry import _logs, trace
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanExporter, SpanExportResult
@@ -71,5 +80,15 @@ def setup_tracing(service_name: str, output_path: str):
             exporter=OTLPSpanExporter(endpoint=f"{otlp_endpoint}/v1/traces"),
             telemetry_enabled=False,
         )
+
+    if otlp_endpoint:
+        from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+        logger_provider = LoggerProvider(resource=Resource.create({"service.name": service_name}))
+        logger_provider.add_log_record_processor(
+            BatchLogRecordProcessor(OTLPLogExporter(endpoint=f"{otlp_endpoint}/v1/logs"))
+        )
+        _logs.set_logger_provider(logger_provider)
+        logging.getLogger().addHandler(LoggingHandler(logger_provider=logger_provider))
+        logging.getLogger().setLevel(logging.INFO)
 
     return tracer

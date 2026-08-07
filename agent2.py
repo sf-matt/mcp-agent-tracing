@@ -5,6 +5,7 @@ httpx instrumentors) -- no manual spans, no OpenLLMetry. We want to see
 exactly what "just turn on auto-instrumentation" gets us for free.
 """
 
+import logging
 import os
 from fastapi import FastAPI, Request
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -21,6 +22,7 @@ FastAPIInstrumentor.instrument_app(app)
 async def lookup(request: Request):
     body = await request.json()
     query = body.get("query", "")
+    logging.info("lookup received query: %s", query)
     # trivial delegate logic -- the point is the hop existing, not this
     return {"agent": "agent-2", "query": query, "answer": "in_stock"}
 
