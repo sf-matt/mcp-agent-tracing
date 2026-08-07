@@ -85,7 +85,11 @@ spec:
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
             - name: ANTHROPIC_API_KEY
               valueFrom:
-                secretKeyRef: {name: anthropic-api-key, key: key}
+                secretKeyRef: {name: anthropic-api-key, key: key, optional: true}
+            # FAKE_LLM=1: local loopback responder instead of the real
+            # Anthropic API -- remove this once the secret above is real
+            # and you want the genuine API call in the trace.
+            - {name: FAKE_LLM, value: "1"}
 ---
 apiVersion: v1
 kind: Service
@@ -121,7 +125,11 @@ spec:
             - {name: SERVICE_NAME, value: "agent-1-openllmetry"}
             - name: ANTHROPIC_API_KEY
               valueFrom:
-                secretKeyRef: {name: anthropic-api-key, key: key}
+                secretKeyRef: {name: anthropic-api-key, key: key, optional: true}
+            # FAKE_LLM=1: local loopback responder instead of the real
+            # Anthropic API -- remove this once the secret above is real
+            # and you want the genuine API call in the trace.
+            - {name: FAKE_LLM, value: "1"}
 ---
 apiVersion: v1
 kind: Service
