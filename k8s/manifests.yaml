@@ -1,4 +1,4 @@
-# Update <YOUR_DOCKERHUB_USERNAME> below before applying.
+# Update sfmatt below before applying.
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: mcp-tool-server
-          image: <YOUR_DOCKERHUB_USERNAME>/mcp-tool-server:latest
+          image: sfmatt/mcp-tool-server:latest
           ports: [{containerPort: 9000}]
 ---
 apiVersion: v1
@@ -39,7 +39,7 @@ spec:
     spec:
       containers:
         - name: agent2
-          image: <YOUR_DOCKERHUB_USERNAME>/agent2:latest
+          image: sfmatt/agent2:latest
           ports: [{containerPort: 9002}]
 ---
 apiVersion: v1
@@ -64,7 +64,7 @@ spec:
     spec:
       containers:
         - name: agent1
-          image: <YOUR_DOCKERHUB_USERNAME>/agent1:latest
+          image: sfmatt/agent1:latest
           ports: [{containerPort: 9001}]
           env:
             # Service DNS names, not localhost -- this is the one thing

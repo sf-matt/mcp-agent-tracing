@@ -8,10 +8,9 @@ if [ -z "${DOCKERHUB_USERNAME:-}" ]; then
 fi
 
 for svc in agent1 agent2 mcp-tool-server; do
-  echo "=== building $svc ==="
-  docker build -f "Dockerfile.$svc" -t "$DOCKERHUB_USERNAME/$svc:latest" .
-  echo "=== pushing $svc ==="
-  docker push "$DOCKERHUB_USERNAME/$svc:latest"
+  echo "=== building + pushing $svc (linux/amd64,linux/arm64) ==="
+  docker buildx build --platform linux/amd64,linux/arm64 \
+    -f "Dockerfile.$svc" -t "$DOCKERHUB_USERNAME/$svc:latest" --push .
 done
 
 echo
