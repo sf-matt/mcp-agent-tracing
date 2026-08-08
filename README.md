@@ -49,11 +49,11 @@ flowchart TB
     A2 -->|"MCP tools/call<br/>(streamable-HTTP)"| MCP
 
     A1 --> OC
-    A2 -.cross-ns OTLP.-> OC
+    A2 -. "cross-ns OTLP" .-> OC
     A3 --> OC
     A3O --> OC
     A4 --> OC
-    MCP -.cross-ns OTLP.-> OC
+    MCP -. "cross-ns OTLP" .-> OC
 ```
 
 One `/run-task` call fans out in two concurrent phases and produces ONE
@@ -86,7 +86,7 @@ sequenceDiagram
     par phase 1
         A1->>A2: POST /process (cross-namespace)
         A2->>M: MCP tools/call execute_task
-        M-->>A2: price result
+        M-->>A2: task result
         A2-->>A1: tool_result
     and
         A1->>A4: POST /audit
