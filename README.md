@@ -135,6 +135,23 @@ are **not** hardcoded -- they come from the `otel-collector-env`
 ConfigMap (`GC_CLUSTER`, `GC_ENV`), so they're changeable without editing
 the pipeline config or rebuilding anything.
 
+## Logs, correlated with traces
+
+`tracing_lib.py` also bridges Python's stdlib `logging` module to an OTel
+`LoggerProvider` + `OTLPLogExporter`, gated on the same
+`OTEL_EXPORTER_OTLP_ENDPOINT`. No new dependencies -- `OTLPLogExporter`
+ships in the same package already installed for trace export, and
+`LoggingHandler` is part of `opentelemetry-sdk`.
+
+Log records automatically pick up the `trace_id`/`span_id` of whatever
+span is active when they're emitted (that's built into the SDK's
+`LogRecord` construction, not something we wired up) -- confirmed by
+matching `trace_id` between a request's spans and its log lines in
+groundcover. One caveat, also confirmed: logs emitted *outside* any
+active span (e.g. `mcp-tool-server`'s own uvicorn access logs, written
+after the request's span has already ended) land with an empty
+`trace_id` -- correlation only works while a span is genuinely open.
+
 ## OpenLLMetry, measured
 
 `ENABLE_OPENLLMETRY=1` layers OpenLLMetry (`traceloop-sdk`) onto the
@@ -226,9 +243,39 @@ method, not the transport.
 - **`httpx.MockTransport` bypasses bare-OTel's httpx instrumentation
   entirely** (see FAKE_LLM above) -- a blind spot in the instrumentation
   library itself, not the app.
+- **OpenLLMetry's own MCP instrumentor silently fails to activate** on
+  this pinned `mcp==2.0.0`. It bundles `opentelemetry-instrumentation-mcp`,
+  which expects `mcp.client.streamable_http.streamablehttp_client` (an
+  older/different SDK naming convention); our SDK actually exposes
+  `streamable_http_client`. Confirmed in the real `agent1-openllmetry`
+  pod's logs: `ERROR:root:Error initializing MCP instrumentor: module
+  'mcp.client.streamable_http' has no attribute 'streamablehttp_client'`.
+  It doesn't crash, it just never instruments -- which is *part* of why
+  the MCP leg is identical between `agent1` and `agent1-openllmetry` (the
+  other part being that MCP's own SDK already tags `tools/call` spans
+  with `gen_ai.operation.name: execute_tool`, independent of OpenLLMetry
+  entirely -- see mcp-tool-server's spans in either trace).
+- **OpenLLMetry's logs-instead-of-attributes path
+  (`Traceloop.init(use_attributes=False)`) needs `opentelemetry._events`,
+  which doesn't exist in the pinned `opentelemetry-api==1.44.0`** (the
+  Events API is still experimental upstream). Tested directly: setting
+  `use_attributes=False` without it doesn't error and doesn't fall back
+  to attributes -- it silently drops `gen_ai.input.messages`/
+  `gen_ai.output.messages` with nowhere for them to land. A real
+  capability, not reachable at these pinned versions.
 
 ## Watch out for
 
+- **Set resource requests/limits, especially on a shared/constrained
+  node.** Pods with none get `BestEffort` QoS -- the kernel's first
+  OOM-kill target under memory pressure. Both `agent1` and
+  `agent1-openllmetry` got OOMKilled (exit 137) in the cluster before
+  `k8s/manifests.yaml` had a `resources:` block, on a node that was
+  already at 80% memory requested / 166% memory limits from unrelated
+  workloads sharing it. Not specific to OpenLLMetry's heavier dependency
+  footprint (agent1-openllmetry does get a larger allowance for that
+  reason, but bare agent1 got killed too) -- it's a shared-cluster
+  reliability issue, not an app bug.
 - **Cross-arch images.** GitHub Actions' default runners build `amd64`
   only; if your cluster node is ARM64 (e.g. a UTM VM on Apple Silicon),
   the pods will sit in `ImagePullBackOff` with "no match for platform in
