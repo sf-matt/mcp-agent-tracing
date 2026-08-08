@@ -19,6 +19,9 @@ spec:
         - name: mcp-tool-server
           image: sfmatt/mcp-tool-server:latest
           ports: [{containerPort: 9000}]
+          resources:
+            requests: {memory: "100Mi", cpu: "50m"}
+            limits: {memory: "256Mi", cpu: "500m"}
           env:
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
 ---
@@ -48,6 +51,9 @@ spec:
         - name: agent2
           image: sfmatt/agent2:latest
           ports: [{containerPort: 9002}]
+          resources:
+            requests: {memory: "100Mi", cpu: "50m"}
+            limits: {memory: "256Mi", cpu: "500m"}
           env:
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
 ---
@@ -77,6 +83,9 @@ spec:
         - name: agent1
           image: sfmatt/agent1:latest
           ports: [{containerPort: 9001}]
+          resources:
+            requests: {memory: "150Mi", cpu: "50m"}
+            limits: {memory: "384Mi", cpu: "500m"}
           env:
             # Service DNS names, not localhost -- this is the one thing
             # that has to change between local docker-compose and k8s.
@@ -117,6 +126,13 @@ spec:
         - name: agent1-openllmetry
           image: sfmatt/agent1:latest
           ports: [{containerPort: 9001}]
+          # Higher than agent1 -- traceloop-sdk imports dozens of
+          # instrumentation modules at startup, and this is the
+          # container that actually got OOMKilled (exit 137) with no
+          # resources block on a node that's already memory-overcommitted.
+          resources:
+            requests: {memory: "256Mi", cpu: "50m"}
+            limits: {memory: "512Mi", cpu: "500m"}
           env:
             - {name: TOOL_SERVER_URL, value: "http://mcp-tool-server:9000/mcp"}
             - {name: AGENT2_URL, value: "http://agent2:9002/lookup"}
