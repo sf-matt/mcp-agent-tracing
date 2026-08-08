@@ -1,109 +1,86 @@
 """
-agent-1: the hero agent. On /run-task it does three real network hops:
-  1. agent-to-tool: calls the MCP tool server over streamable HTTP
-  2. agent-to-agent: calls agent-2 over plain HTTP (httpx)
-  3. agent-to-LLM: a real Anthropic API call summarizing the tool result
+agent-1: the orchestrator. On /run-task it fans out to four downstream
+agents and aggregates their results -- no LLM call, no tool call, no
+custom spans of its own. Bare OTel auto-instrumentation only
+(FastAPIInstrumentor + HTTPXClientInstrumentor).
 
-Bare OTel auto-instrumentation only in this file (FastAPIInstrumentor +
-HTTPXClientInstrumentor). Whether the LLM call above shows up as anything
-more than a generic HTTP span depends entirely on ENABLE_OPENLLMETRY --
-see tracing_lib.py. This same file runs as both the "agent1" (bare OTel)
-and "agent1-openllmetry" deployments; only that one env var differs.
+Fan-out happens in two concurrent phases, not four fully-independent
+calls, because agent3/agent3-openllmetry summarize agent2's actual tool
+result -- they need it to exist first:
+  phase 1 (concurrent): agent2 (tool lookup) + agent4 (audit -- doesn't
+    depend on anyone else's result, so it runs alongside agent2 rather
+    than waiting)
+  phase 2 (concurrent): agent3 + agent3-openllmetry, both summarizing
+    the SAME text (agent2's real result) so their spans are directly
+    comparable
 
-FAKE_LLM=1 swaps the real Anthropic API for a local loopback HTTP server
-returning a canned response -- a demo-reliability fallback for flaky
-wifi/rate limits, not a code-level mock. It's a REAL local HTTP call
-(genuine socket, genuine request/response), so httpx auto-instrumentation
-still sees a real "POST" span exactly like it would against the real API.
-A code-level mock (e.g. httpx.MockTransport) would NOT do this -- it
-bypasses HTTPXClientInstrumentor entirely, since that instrumentor patches
-httpx's default transport, not custom ones, silently erasing the span
-bare OTel would otherwise produce. Confirmed by testing both.
+One /run-task call still produces ONE trace with all four downstream
+agents as spans under agent1's root span -- confirmed empirically, see
+README. The bare-OTel vs. OpenLLMetry comparison lives in agent3 vs.
+agent3-openllmetry (see tracing_lib.py's ENABLE_OPENLLMETRY); agent4
+carries the third instrumentation tier (hand-rolled custom spans, no
+SDK, see agent4.py).
 """
 
-import json
+import asyncio
 import logging
 import os
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from fastapi import FastAPI
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 import httpx
 
-from anthropic import AsyncAnthropic
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
-
 from tracing_lib import setup_tracing
 
-SERVICE_NAME = os.environ.get("SERVICE_NAME", "agent-1")
-setup_tracing(SERVICE_NAME, os.environ.get("SPAN_FILE", "spans_agent1.jsonl"))
+setup_tracing("agent-1", os.environ.get("SPAN_FILE", "spans_agent1.jsonl"))
 
 app = FastAPI()
 FastAPIInstrumentor.instrument_app(app)
 HTTPXClientInstrumentor().instrument()  # patches httpx.AsyncClient / httpx.Client
 
-TOOL_SERVER_URL = os.environ.get("TOOL_SERVER_URL", "http://127.0.0.1:9000/mcp")
 AGENT2_URL = os.environ.get("AGENT2_URL", "http://127.0.0.1:9002/lookup")
+AGENT3_URL = os.environ.get("AGENT3_URL", "http://127.0.0.1:9003/summarize")
+AGENT3_OPENLLMETRY_URL = os.environ.get("AGENT3_OPENLLMETRY_URL", "http://127.0.0.1:9013/summarize")
+AGENT4_URL = os.environ.get("AGENT4_URL", "http://127.0.0.1:9004/audit")
 
-if os.environ.get("FAKE_LLM"):
-    class _FakeAnthropicHandler(BaseHTTPRequestHandler):
-        def do_POST(self):
-            body = json.dumps({
-                "id": "msg_fake_demo",
-                "type": "message",
-                "role": "assistant",
-                "model": "claude-haiku-4-5-20251001",
-                "content": [{"type": "text", "text": "Fake summary: SKU-4471 is in stock at $42.00."}],
-                "stop_reason": "end_turn",
-                "usage": {"input_tokens": 42, "output_tokens": 12},
-            }).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+SKU = "SKU-4471"
 
-        def log_message(self, *args):
-            pass
 
-    _fake_llm_server = ThreadingHTTPServer(("127.0.0.1", 9091), _FakeAnthropicHandler)
-    threading.Thread(target=_fake_llm_server.serve_forever, daemon=True).start()
-    anthropic_client = AsyncAnthropic(api_key="fake-key-for-demo", base_url="http://127.0.0.1:9091")
-else:
-    anthropic_client = AsyncAnthropic()
+async def _post(client, url, json_body):
+    resp = await client.post(url, json=json_body)
+    return resp.json()
 
 
 @app.post("/run-task")
 async def run_task():
-    results = {}
     logging.info("run_task started")
-
-    # --- agent-to-tool: real MCP call over streamable HTTP ---
-    async with streamable_http_client(TOOL_SERVER_URL) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            tool_result = await session.call_tool("lookup_price", arguments={"sku": "SKU-4471"})
-            results["tool_call"] = str(tool_result.content)
-    logging.info("tool call complete: %s", results["tool_call"])
-
-    # --- agent-to-agent: plain HTTP call to agent-2 ---
     async with httpx.AsyncClient() as client:
-        resp = await client.post(AGENT2_URL, json={"query": "SKU-4471 in stock?"})
-        results["agent2_call"] = resp.json()
-    logging.info("agent2 call complete: %s", results["agent2_call"])
+        # phase 1: agent2 (needs to run first -- its result feeds phase 2)
+        # and agent4 (independent, so it runs alongside agent2 instead of
+        # waiting behind it) concurrently.
+        agent2_result, agent4_result = await asyncio.gather(
+            _post(client, AGENT2_URL, {"query": f"{SKU} in stock?", "sku": SKU}),
+            _post(client, AGENT4_URL, {"sku": SKU}),
+        )
+        logging.info("phase 1 complete: agent2=%s agent4=%s", agent2_result, agent4_result)
 
-    # --- agent-to-LLM: real Anthropic call summarizing the tool result ---
-    message = await anthropic_client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        messages=[{"role": "user", "content": f"In one short sentence, summarize this: {results['tool_call']}"}],
-    )
-    results["llm_summary"] = message.content[0].text
-    logging.info("llm call complete: %s", results["llm_summary"])
+        # phase 2: both summarizer variants, concurrently, over the SAME
+        # real tool result -- directly comparable spans on one trace.
+        summarize_text = f"tool result for {SKU}: {agent2_result.get('tool_result')}"
+        agent3_result, agent3_oll_result = await asyncio.gather(
+            _post(client, AGENT3_URL, {"text": summarize_text}),
+            _post(client, AGENT3_OPENLLMETRY_URL, {"text": summarize_text}),
+        )
+        logging.info("phase 2 complete: agent3=%s agent3-openllmetry=%s", agent3_result, agent3_oll_result)
 
+    results = {
+        "agent2_call": agent2_result,
+        "agent3_call": agent3_result,
+        "agent3_openllmetry_call": agent3_oll_result,
+        "agent4_call": agent4_result,
+    }
+    logging.info("run_task complete")
     return results
 
 

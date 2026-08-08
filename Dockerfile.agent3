@@ -1,0 +1,8 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY agent3.py tracing_lib.py ./
+ENV PORT=9003
+EXPOSE 9003
+CMD ["python3", "agent3.py"]

@@ -1,12 +1,19 @@
 # Update sfmatt below before applying.
 # Requires a Secret named "anthropic-api-key" with key "key", created out-of-band:
 #   kubectl create secret generic anthropic-api-key --from-literal=key='<your-anthropic-key>' -n mcp-agent-tracing
+#
+# Two namespaces: mcp-agent-tracing (agent1 orchestrator + agent3/agent3-openllmetry
+# summarizers + agent4 auditor + otel-collector) and mcp-agent-tracing-platform
+# (agent2 tool-caller + mcp-tool-server). Every object below carries its own
+# `namespace:`, so `kubectl apply -f k8s/manifests.yaml` (no -n flag) lands
+# each resource in the right place. Cross-namespace hops use FQDNs
+# (<svc>.<namespace>.svc.cluster.local); same-namespace hops use short names.
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mcp-tool-server
-  namespace: mcp-agent-tracing
+  namespace: mcp-agent-tracing-platform
 spec:
   replicas: 1
   selector:
@@ -23,13 +30,14 @@ spec:
             requests: {memory: "100Mi", cpu: "50m"}
             limits: {memory: "256Mi", cpu: "500m"}
           env:
-            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
+            # Cross-namespace: otel-collector lives in mcp-agent-tracing.
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.mcp-agent-tracing.svc.cluster.local:4318"}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: mcp-tool-server
-  namespace: mcp-agent-tracing
+  namespace: mcp-agent-tracing-platform
 spec:
   selector: {app: mcp-tool-server}
   ports: [{port: 9000, targetPort: 9000}]
@@ -38,7 +46,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: agent2
-  namespace: mcp-agent-tracing
+  namespace: mcp-agent-tracing-platform
 spec:
   replicas: 1
   selector:
@@ -55,16 +63,130 @@ spec:
             requests: {memory: "100Mi", cpu: "50m"}
             limits: {memory: "256Mi", cpu: "500m"}
           env:
-            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
+            # Same namespace as mcp-tool-server -- short name works.
+            - {name: TOOL_SERVER_URL, value: "http://mcp-tool-server:9000/mcp"}
+            # Cross-namespace: otel-collector lives in mcp-agent-tracing.
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.mcp-agent-tracing.svc.cluster.local:4318"}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: agent2
-  namespace: mcp-agent-tracing
+  namespace: mcp-agent-tracing-platform
 spec:
   selector: {app: agent2}
   ports: [{port: 9002, targetPort: 9002}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent3
+  namespace: mcp-agent-tracing
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: agent3}
+  template:
+    metadata:
+      labels: {app: agent3}
+    spec:
+      containers:
+        - name: agent3
+          image: sfmatt/agent3:latest
+          ports: [{containerPort: 9003}]
+          resources:
+            requests: {memory: "100Mi", cpu: "50m"}
+            limits: {memory: "256Mi", cpu: "500m"}
+          env:
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef: {name: anthropic-api-key, key: key, optional: true}
+            # FAKE_LLM=1: local loopback responder instead of the real
+            # Anthropic API -- remove this once the secret above is real
+            # and you want the genuine API call in the trace.
+            - {name: FAKE_LLM, value: "1"}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent3
+  namespace: mcp-agent-tracing
+spec:
+  selector: {app: agent3}
+  ports: [{port: 9003, targetPort: 9003}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent3-openllmetry
+  namespace: mcp-agent-tracing
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: agent3-openllmetry}
+  template:
+    metadata:
+      labels: {app: agent3-openllmetry}
+    spec:
+      containers:
+        - name: agent3-openllmetry
+          image: sfmatt/agent3:latest
+          ports: [{containerPort: 9003}]
+          # Higher than agent3 -- traceloop-sdk imports dozens of
+          # instrumentation modules at startup.
+          resources:
+            requests: {memory: "256Mi", cpu: "50m"}
+            limits: {memory: "512Mi", cpu: "500m"}
+          env:
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
+            - {name: ENABLE_OPENLLMETRY, value: "1"}
+            - {name: SERVICE_NAME, value: "agent-3-openllmetry"}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef: {name: anthropic-api-key, key: key, optional: true}
+            - {name: FAKE_LLM, value: "1"}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent3-openllmetry
+  namespace: mcp-agent-tracing
+spec:
+  selector: {app: agent3-openllmetry}
+  ports: [{port: 9003, targetPort: 9003}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent4
+  namespace: mcp-agent-tracing
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: agent4}
+  template:
+    metadata:
+      labels: {app: agent4}
+    spec:
+      containers:
+        - name: agent4
+          image: sfmatt/agent4:latest
+          ports: [{containerPort: 9004}]
+          resources:
+            requests: {memory: "100Mi", cpu: "50m"}
+            limits: {memory: "256Mi", cpu: "500m"}
+          env:
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent4
+  namespace: mcp-agent-tracing
+spec:
+  selector: {app: agent4}
+  ports: [{port: 9004, targetPort: 9004}]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -84,21 +206,18 @@ spec:
           image: sfmatt/agent1:latest
           ports: [{containerPort: 9001}]
           resources:
-            requests: {memory: "150Mi", cpu: "50m"}
-            limits: {memory: "384Mi", cpu: "500m"}
+            requests: {memory: "100Mi", cpu: "50m"}
+            limits: {memory: "256Mi", cpu: "500m"}
           env:
-            # Service DNS names, not localhost -- this is the one thing
-            # that has to change between local docker-compose and k8s.
-            - {name: TOOL_SERVER_URL, value: "http://mcp-tool-server:9000/mcp"}
-            - {name: AGENT2_URL, value: "http://agent2:9002/lookup"}
+            # Cross-namespace: agent2 lives in mcp-agent-tracing-platform.
+            # This is the one thing that actually changes for "going
+            # cross-ns" -- short name "agent2" would resolve to nothing.
+            - {name: AGENT2_URL, value: "http://agent2.mcp-agent-tracing-platform.svc.cluster.local:9002/lookup"}
+            # Same namespace as agent1 -- short names work.
+            - {name: AGENT3_URL, value: "http://agent3:9003/summarize"}
+            - {name: AGENT3_OPENLLMETRY_URL, value: "http://agent3-openllmetry:9003/summarize"}
+            - {name: AGENT4_URL, value: "http://agent4:9004/audit"}
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
-            - name: ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef: {name: anthropic-api-key, key: key, optional: true}
-            # FAKE_LLM=1: local loopback responder instead of the real
-            # Anthropic API -- remove this once the secret above is real
-            # and you want the genuine API call in the trace.
-            - {name: FAKE_LLM, value: "1"}
 ---
 apiVersion: v1
 kind: Service
@@ -107,51 +226,4 @@ metadata:
   namespace: mcp-agent-tracing
 spec:
   selector: {app: agent1}
-  ports: [{port: 9001, targetPort: 9001}]
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: agent1-openllmetry
-  namespace: mcp-agent-tracing
-spec:
-  replicas: 1
-  selector:
-    matchLabels: {app: agent1-openllmetry}
-  template:
-    metadata:
-      labels: {app: agent1-openllmetry}
-    spec:
-      containers:
-        - name: agent1-openllmetry
-          image: sfmatt/agent1:latest
-          ports: [{containerPort: 9001}]
-          # Higher than agent1 -- traceloop-sdk imports dozens of
-          # instrumentation modules at startup, and this is the
-          # container that actually got OOMKilled (exit 137) with no
-          # resources block on a node that's already memory-overcommitted.
-          resources:
-            requests: {memory: "256Mi", cpu: "50m"}
-            limits: {memory: "512Mi", cpu: "500m"}
-          env:
-            - {name: TOOL_SERVER_URL, value: "http://mcp-tool-server:9000/mcp"}
-            - {name: AGENT2_URL, value: "http://agent2:9002/lookup"}
-            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
-            - {name: ENABLE_OPENLLMETRY, value: "1"}
-            - {name: SERVICE_NAME, value: "agent-1-openllmetry"}
-            - name: ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef: {name: anthropic-api-key, key: key, optional: true}
-            # FAKE_LLM=1: local loopback responder instead of the real
-            # Anthropic API -- remove this once the secret above is real
-            # and you want the genuine API call in the trace.
-            - {name: FAKE_LLM, value: "1"}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: agent1-openllmetry
-  namespace: mcp-agent-tracing
-spec:
-  selector: {app: agent1-openllmetry}
   ports: [{port: 9001, targetPort: 9001}]
