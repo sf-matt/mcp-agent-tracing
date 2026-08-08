@@ -2,11 +2,13 @@
 
 Real services, wired with genuine network calls, demonstrating what OTel
 tracing does and doesn't give you automatically across an agent-to-agent
-boundary, an agent-to-tool (MCP) boundary, an agent-to-LLM boundary, and
-a cross-namespace network boundary.
+boundary, an agent-to-tool (MCP) boundary, an agent-to-LLM boundary, a
+cross-namespace network boundary, and -- at the far end -- what's left
+when an agent has no instrumentation at all and the only visibility
+left is the platform's own eBPF sensor.
 
 - `agent1` -- the orchestrator. On `/run-task` it fans out concurrently
-  to four downstream agents and aggregates their results. No LLM call,
+  to five downstream agents and aggregates their results. No LLM call,
   no tool call, no custom spans of its own -- pure orchestration.
 - `agent2` -- the tool-caller. Makes the real agent-to-tool call (MCP
   over streamable-HTTP) to `mcp-tool-server`. Lives in a separate
@@ -19,6 +21,11 @@ a cross-namespace network boundary.
 - `agent4` -- the auditor. Records a hand-rolled custom span for the
   incoming request, no vendor SDK, no auto-instrumentation beyond bare
   FastAPI for the inbound request. The third instrumentation tier.
+- `agent5` -- the ghost. Zero OpenTelemetry. No `tracing_lib` import, no
+  instrumentation, no manual spans, nothing -- the floor below the other
+  three tiers. Whatever visibility exists for this one comes entirely
+  from the cluster's own eBPF sensor, independent of anything the app
+  does.
 - `mcp-tool-server` -- real MCP server on streamable-HTTP transport (not
   stdio), one tool (`execute_task`), bare OTel, zero manual spans.
 - `otel-collector` -- self-contained in this repo, forwards to groundcover.
@@ -34,6 +41,7 @@ flowchart TB
         A3[agent3<br/>summarizer, bare OTel]
         A3O[agent3-openllmetry<br/>summarizer, OpenLLMetry]
         A4[agent4<br/>auditor, custom hand-rolled spans]
+        A5[agent5<br/>ghost, ZERO OTel]
         OC[otel-collector]
     end
 
@@ -42,8 +50,11 @@ flowchart TB
         MCP[mcp-tool-server]
     end
 
+    EBPF{{"eBPF sensor<br/>(platform-level, no app code involved)"}}
+
     A1 -. "phase 1 (concurrent)" .-> A2
     A1 -. "phase 1 (concurrent)" .-> A4
+    A1 -. "phase 1 (concurrent)" .-> A5
     A1 -. "phase 2 (concurrent, needs agent2's result)" .-> A3
     A1 -. "phase 2 (concurrent, needs agent2's result)" .-> A3O
     A2 -->|"MCP tools/call<br/>(streamable-HTTP)"| MCP
@@ -54,14 +65,19 @@ flowchart TB
     A3O --> OC
     A4 --> OC
     MCP -. "cross-ns OTLP" .-> OC
+
+    EBPF -. "observes the wire,<br/>not the app" .-> A5
 ```
 
 One `/run-task` call fans out in two concurrent phases and produces ONE
-trace containing all six services and all three instrumentation tiers
-as branches under `agent1`'s root span -- no need to trigger separate
-endpoints to compare bare OTel vs. OpenLLMetry vs. custom spans, it's
-all in one trace. Confirmed empirically (see "Fan-out, verified" below),
-not assumed.
+trace containing agent2/agent3/agent3-openllmetry/agent4 and all three
+of *their* instrumentation tiers as branches under `agent1`'s root span
+-- no need to trigger separate endpoints to compare bare OTel vs.
+OpenLLMetry vs. custom spans, it's all in one trace. Confirmed
+empirically (see "Fan-out, verified" below), not assumed. `agent5` is
+the deliberate exception -- same real call, same fan-out, but it never
+joins that trace at all (see "agent5" below for what actually happens
+instead).
 
 `agent2` and `mcp-tool-server` live in a second namespace
 (`mcp-agent-tracing-platform`) -- a real "agent team" vs. "platform/tools
@@ -81,6 +97,7 @@ sequenceDiagram
     participant A3 as agent3
     participant A3O as agent3-openllmetry
     participant A4 as agent4
+    participant A5 as agent5 (zero OTel)
 
     U->>A1: POST /run-task
     par phase 1
@@ -91,6 +108,9 @@ sequenceDiagram
     and
         A1->>A4: POST /audit
         A4-->>A1: audit_id + decision
+    and
+        A1->>A5: POST /ghost-task (traceparent sent, ignored)
+        A5-->>A1: status: done (no span emitted)
     end
     par phase 2 (needs agent2's real result)
         A1->>A3: POST /summarize
@@ -102,27 +122,75 @@ sequenceDiagram
     A1-->>U: aggregated result
 ```
 
-### One trace, three instrumentation tiers
+### Four visibility tiers, one request
 
 ```mermaid
 flowchart TB
-    T[agent1's trace]
+    T[agent1's request]
     T --> bare["agent3: bare OTel<br/>POST span only -- http.method/url/status_code"]
     T --> oll["agent3-openllmetry: + OpenLLMetry<br/>same POST span, PLUS anthropic.chat<br/>(gen_ai.request.model, gen_ai.usage.*, gen_ai.input/output.messages)"]
     T --> custom["agent4: hand-rolled custom span<br/>audit.id, audit.task_id, audit.decision, audit.reviewer<br/>-- no SDK, exactly what we decided mattered"]
+    T --> ghost["agent5: ZERO app code<br/>own independent eBPF-generated trace_id, NOT joined to this one --<br/>full method/path/status/headers/BODY captured anyway,<br/>the real traceparent preserved as correlation metadata"]
 ```
+
+The first three all land in the *same* OTel trace. `agent5` doesn't --
+it's a genuinely different mechanism, not just a smaller version of the
+same one. See "agent5: below zero" below for the actual captured data.
 
 ## Fan-out, verified
 
-Fan-out is two concurrent phases, not four fully-independent calls,
+Fan-out is two concurrent phases, not five fully-independent calls,
 because `agent3`/`agent3-openllmetry` summarize `agent2`'s *actual* tool
-result -- they need it to exist first. `agent4` doesn't depend on
-anyone else's result, so it runs alongside `agent2` in phase 1 instead
-of waiting behind it. Confirmed by reading the actual span tree: all
-four downstream `POST` spans from `agent1` share the same `parent_id`
-(`agent1`'s root `POST /run-task` span) -- true sibling branches, not a
-chain -- and one `trace_id` spans all six services across both
-namespaces, verified directly in groundcover.
+result -- they need it to exist first. `agent4` and `agent5` don't
+depend on anyone else's result, so they run alongside `agent2` in phase
+1 instead of waiting behind it. Confirmed by reading the actual span
+tree: agent1's downstream `POST` spans to agent2/agent3/agent3-openllmetry/agent4
+all share the same `parent_id` (`agent1`'s root `POST /run-task` span)
+-- true sibling branches, not a chain -- and one `trace_id` spans those
+five services across both namespaces, verified directly in groundcover.
+`agent5` gets the same real call (same `traceparent` header sent, same
+concurrent phase) but never reports back into that trace at all -- see
+below.
+
+## agent5: below zero, the eBPF floor
+
+`agent5` has no `tracing_lib` import, no OTel SDK, no instrumentation of
+any kind -- literally nothing. `agent1`'s outbound call to it still
+produces a normal client-side `POST` span (that instrumentation lives on
+the *caller*), but from `agent5`'s own side, nothing comes back: no
+server span, no participation in the trace, `agent5` never once appears
+as a `service.name` anywhere OTel-related. Confirmed locally by grepping
+the collector's entire output for `agent-5` across an otherwise
+successful request: zero matches.
+
+In the cluster, querying groundcover directly for the same request finds
+`agent5` anyway -- tagged `source: eBPF`, `tracer.name: kernelsocket`,
+not `opentelemetry`:
+
+```
+service.name: agent5
+span.name: POST /ghost-task
+http.response.status_code: 200
+request_body: {"task_id":"task-x"}
+response_body: {"agent":"agent-5","task_id":"task-x","status":"done"}
+client: agent1 (pod, namespace, IP all resolved)
+server: agent5 (pod, namespace, IP all resolved)
+```
+
+Full method, path, status, headers, and **the entire request and
+response body**, captured purely from watching the socket -- zero lines
+of application code. The nuance worth being precise about: this span
+lives on its own independently-generated `trace_id`, NOT the same one as
+`agent1`'s real OTel trace for this request. eBPF doesn't join the
+existing trace -- it makes its own. But it isn't blind to it either: the
+captured HTTP headers include the real `traceparent` `agent1` sent
+(since `agent1` *is* instrumented and propagates context to everything
+it calls, whether or not the far end does anything with it), and the
+span's own `tracing.w3c.trace_id` attribute is exactly `agent1`'s actual
+trace_id for that request -- confirmed by matching the two directly.
+That's the mechanism a platform like groundcover likely uses to
+correlate an eBPF-only hop back to the real application trace in its UI,
+even without a shared raw `trace_id` underneath.
 
 ## Quickstart
 
