@@ -1,0 +1,8 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY agent5.py ./
+ENV PORT=9005
+EXPOSE 9005
+CMD ["python3", "agent5.py"]

@@ -58,6 +58,13 @@ services:
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
     depends_on: [otel-collector]
+  agent5:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent5
+    ports: ["9005:9005"]
+    # Deliberately no OTEL_EXPORTER_OTLP_ENDPOINT -- agent5 has no OTel
+    # code to read it anyway.
   agent1:
     build:
       context: .
@@ -68,5 +75,6 @@ services:
       AGENT3_URL: "http://agent3:9003/summarize"
       AGENT3_OPENLLMETRY_URL: "http://agent3-openllmetry:9003/summarize"
       AGENT4_URL: "http://agent4:9004/audit"
+      AGENT5_URL: "http://agent5:9005/ghost-task"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
-    depends_on: [agent2, agent3, agent3-openllmetry, agent4, otel-collector]
+    depends_on: [agent2, agent3, agent3-openllmetry, agent4, agent5, otel-collector]

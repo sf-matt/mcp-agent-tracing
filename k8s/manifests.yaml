@@ -191,6 +191,38 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: agent5
+  namespace: mcp-agent-tracing
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: agent5}
+  template:
+    metadata:
+      labels: {app: agent5}
+    spec:
+      containers:
+        - name: agent5
+          image: sfmatt/agent5:latest
+          ports: [{containerPort: 9005}]
+          resources:
+            requests: {memory: "50Mi", cpu: "50m"}
+            limits: {memory: "128Mi", cpu: "500m"}
+          # Deliberately no OTEL_EXPORTER_OTLP_ENDPOINT -- agent5 has no
+          # OTel code to read it anyway.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent5
+  namespace: mcp-agent-tracing
+spec:
+  selector: {app: agent5}
+  ports: [{port: 9005, targetPort: 9005}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: agent1
   namespace: mcp-agent-tracing
 spec:
@@ -217,6 +249,7 @@ spec:
             - {name: AGENT3_URL, value: "http://agent3:9003/summarize"}
             - {name: AGENT3_OPENLLMETRY_URL, value: "http://agent3-openllmetry:9003/summarize"}
             - {name: AGENT4_URL, value: "http://agent4:9004/audit"}
+            - {name: AGENT5_URL, value: "http://agent5:9005/ghost-task"}
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
 ---
 apiVersion: v1
