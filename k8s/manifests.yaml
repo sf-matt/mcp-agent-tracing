@@ -212,7 +212,7 @@ spec:
             # Cross-namespace: agent2 lives in mcp-agent-tracing-platform.
             # This is the one thing that actually changes for "going
             # cross-ns" -- short name "agent2" would resolve to nothing.
-            - {name: AGENT2_URL, value: "http://agent2.mcp-agent-tracing-platform.svc.cluster.local:9002/lookup"}
+            - {name: AGENT2_URL, value: "http://agent2.mcp-agent-tracing-platform.svc.cluster.local:9002/process"}
             # Same namespace as agent1 -- short names work.
             - {name: AGENT3_URL, value: "http://agent3:9003/summarize"}
             - {name: AGENT3_OPENLLMETRY_URL, value: "http://agent3-openllmetry:9003/summarize"}

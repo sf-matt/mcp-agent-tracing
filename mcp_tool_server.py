@@ -14,14 +14,14 @@ from tracing_lib import setup_tracing
 
 setup_tracing("mcp-tool-server", os.environ.get("SERVER_SPAN_FILE", "spans_tool_server.jsonl"))
 
-mcp = MCPServer("pricing-tool-server")
+mcp = MCPServer("generic-tool-server")
 
 
 @mcp.tool()
-def lookup_price(sku: str) -> dict:
-    """Look up the price for a given SKU. Pure business logic, no manual tracing code."""
-    logging.info("lookup_price called for sku=%s", sku)
-    return {"sku": sku, "price_usd": 42.00}
+def execute_task(task_id: str) -> dict:
+    """Execute a task by ID. Pure business logic, no manual tracing code."""
+    logging.info("execute_task called for task_id=%s", task_id)
+    return {"task_id": task_id, "status": "completed", "output": 42}
 
 
 if __name__ == "__main__":

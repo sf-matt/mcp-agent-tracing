@@ -64,7 +64,7 @@ services:
       dockerfile: Dockerfile.agent1
     ports: ["9001:9001"]
     environment:
-      AGENT2_URL: "http://agent2:9002/lookup"
+      AGENT2_URL: "http://agent2:9002/process"
       AGENT3_URL: "http://agent3:9003/summarize"
       AGENT3_OPENLLMETRY_URL: "http://agent3-openllmetry:9003/summarize"
       AGENT4_URL: "http://agent4:9004/audit"

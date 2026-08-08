@@ -31,20 +31,20 @@ HTTPXClientInstrumentor().instrument()
 TOOL_SERVER_URL = os.environ.get("TOOL_SERVER_URL", "http://127.0.0.1:9000/mcp")
 
 
-@app.post("/lookup")
-async def lookup(request: Request):
+@app.post("/process")
+async def process(request: Request):
     body = await request.json()
     query = body.get("query", "")
-    sku = body.get("sku", "SKU-4471")
-    logging.info("lookup received query: %s", query)
+    task_id = body.get("task_id", "task-x")
+    logging.info("process received query: %s", query)
 
     async with streamable_http_client(TOOL_SERVER_URL) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            tool_result = await session.call_tool("lookup_price", arguments={"sku": sku})
+            tool_result = await session.call_tool("execute_task", arguments={"task_id": task_id})
             result_text = str(tool_result.content)
 
-    logging.info("lookup complete: %s", result_text)
+    logging.info("process complete: %s", result_text)
     return {"agent": "agent-2", "query": query, "tool_result": result_text}
 
 

@@ -39,12 +39,12 @@ app = FastAPI()
 FastAPIInstrumentor.instrument_app(app)
 HTTPXClientInstrumentor().instrument()  # patches httpx.AsyncClient / httpx.Client
 
-AGENT2_URL = os.environ.get("AGENT2_URL", "http://127.0.0.1:9002/lookup")
+AGENT2_URL = os.environ.get("AGENT2_URL", "http://127.0.0.1:9002/process")
 AGENT3_URL = os.environ.get("AGENT3_URL", "http://127.0.0.1:9003/summarize")
 AGENT3_OPENLLMETRY_URL = os.environ.get("AGENT3_OPENLLMETRY_URL", "http://127.0.0.1:9013/summarize")
 AGENT4_URL = os.environ.get("AGENT4_URL", "http://127.0.0.1:9004/audit")
 
-SKU = "SKU-4471"
+TASK_ID = "task-x"
 
 
 async def _post(client, url, json_body):
@@ -60,14 +60,14 @@ async def run_task():
         # and agent4 (independent, so it runs alongside agent2 instead of
         # waiting behind it) concurrently.
         agent2_result, agent4_result = await asyncio.gather(
-            _post(client, AGENT2_URL, {"query": f"{SKU} in stock?", "sku": SKU}),
-            _post(client, AGENT4_URL, {"sku": SKU}),
+            _post(client, AGENT2_URL, {"query": f"process {TASK_ID}", "task_id": TASK_ID}),
+            _post(client, AGENT4_URL, {"task_id": TASK_ID}),
         )
         logging.info("phase 1 complete: agent2=%s agent4=%s", agent2_result, agent4_result)
 
         # phase 2: both summarizer variants, concurrently, over the SAME
         # real tool result -- directly comparable spans on one trace.
-        summarize_text = f"tool result for {SKU}: {agent2_result.get('tool_result')}"
+        summarize_text = f"tool result for {TASK_ID}: {agent2_result.get('tool_result')}"
         agent3_result, agent3_oll_result = await asyncio.gather(
             _post(client, AGENT3_URL, {"text": summarize_text}),
             _post(client, AGENT3_OPENLLMETRY_URL, {"text": summarize_text}),

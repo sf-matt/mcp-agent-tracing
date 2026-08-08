@@ -32,15 +32,15 @@ FastAPIInstrumentor.instrument_app(app)
 @app.post("/audit")
 async def audit(request: Request):
     body = await request.json()
-    sku = body.get("sku", "unknown")
+    task_id = body.get("task_id", "unknown")
 
     with tracer.start_as_current_span("audit.record_decision") as span:
         audit_id = str(uuid.uuid4())
         span.set_attribute("audit.id", audit_id)
-        span.set_attribute("audit.sku", sku)
+        span.set_attribute("audit.task_id", task_id)
         span.set_attribute("audit.decision", "approved")
         span.set_attribute("audit.reviewer", "agent-4-automated")
-        logging.info("audit recorded: %s for sku=%s", audit_id, sku)
+        logging.info("audit recorded: %s for task_id=%s", audit_id, task_id)
 
     return {"agent": SERVICE_NAME, "audit_id": audit_id, "decision": "approved"}
 

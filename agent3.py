@@ -48,7 +48,7 @@ if os.environ.get("FAKE_LLM"):
                 "type": "message",
                 "role": "assistant",
                 "model": "claude-haiku-4-5-20251001",
-                "content": [{"type": "text", "text": "Fake summary: SKU-4471 is in stock at $42.00."}],
+                "content": [{"type": "text", "text": "Fake summary: task-x completed with output 42."}],
                 "stop_reason": "end_turn",
                 "usage": {"input_tokens": 42, "output_tokens": 12},
             }).encode()

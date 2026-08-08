@@ -20,7 +20,7 @@ a cross-namespace network boundary.
   incoming request, no vendor SDK, no auto-instrumentation beyond bare
   FastAPI for the inbound request. The third instrumentation tier.
 - `mcp-tool-server` -- real MCP server on streamable-HTTP transport (not
-  stdio), one tool (`lookup_price`), bare OTel, zero manual spans.
+  stdio), one tool (`execute_task`), bare OTel, zero manual spans.
 - `otel-collector` -- self-contained in this repo, forwards to groundcover.
 
 ## Architecture
@@ -84,8 +84,8 @@ sequenceDiagram
 
     U->>A1: POST /run-task
     par phase 1
-        A1->>A2: POST /lookup (cross-namespace)
-        A2->>M: MCP tools/call lookup_price
+        A1->>A2: POST /process (cross-namespace)
+        A2->>M: MCP tools/call execute_task
         M-->>A2: price result
         A2-->>A1: tool_result
     and
@@ -109,7 +109,7 @@ flowchart TB
     T[agent1's trace]
     T --> bare["agent3: bare OTel<br/>POST span only -- http.method/url/status_code"]
     T --> oll["agent3-openllmetry: + OpenLLMetry<br/>same POST span, PLUS anthropic.chat<br/>(gen_ai.request.model, gen_ai.usage.*, gen_ai.input/output.messages)"]
-    T --> custom["agent4: hand-rolled custom span<br/>audit.id, audit.sku, audit.decision, audit.reviewer<br/>-- no SDK, exactly what we decided mattered"]
+    T --> custom["agent4: hand-rolled custom span<br/>audit.id, audit.task_id, audit.decision, audit.reviewer<br/>-- no SDK, exactly what we decided mattered"]
 ```
 
 ## Fan-out, verified
@@ -238,7 +238,7 @@ attributes we picked ourselves:
 ```
 Name: audit.record_decision
 audit.id: <uuid>
-audit.sku: SKU-4471
+audit.task_id: task-x
 audit.decision: approved
 audit.reviewer: agent-4-automated
 ```
