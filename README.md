@@ -2,16 +2,23 @@
 
 Real services, wired with genuine network calls, demonstrating what OTel
 tracing does and doesn't give you automatically across an agent-to-agent
-boundary, an agent-to-tool (MCP) boundary, and an agent-to-LLM boundary.
+boundary, an agent-to-tool (MCP) boundary, an agent-to-LLM boundary, and
+a cross-namespace network boundary.
 
-- `agent1` / `agent1-openllmetry` -- the hero agent. Same codebase, same
-  image, one env var apart. On `/run-task` each does three real network
-  hops: calls the MCP tool server (agent-to-tool), calls agent2
-  (agent-to-agent), and calls the Anthropic API (agent-to-LLM). Both
-  variants run permanently, side by side, so the "before OpenLLMetry" and
-  "after OpenLLMetry" traces are always there to compare -- not just
-  during whatever session happened to add OpenLLMetry.
-- `agent2` -- delegation target, plain FastAPI, bare OTel auto-instrumentation.
+- `agent1` -- the orchestrator. On `/run-task` it fans out concurrently
+  to four downstream agents and aggregates their results. No LLM call,
+  no tool call, no custom spans of its own -- pure orchestration.
+- `agent2` -- the tool-caller. Makes the real agent-to-tool call (MCP
+  over streamable-HTTP) to `mcp-tool-server`. Lives in a separate
+  namespace from the other agents (see below).
+- `agent3` / `agent3-openllmetry` -- the summarizer. Same codebase, same
+  image, one env var apart. Makes the real Anthropic API call. Both
+  variants run permanently, side by side, so the "before OpenLLMetry"
+  and "after OpenLLMetry" spans are always there to compare on the same
+  trace -- not just during whatever session happened to add OpenLLMetry.
+- `agent4` -- the auditor. Records a hand-rolled custom span for the
+  incoming request, no vendor SDK, no auto-instrumentation beyond bare
+  FastAPI for the inbound request. The third instrumentation tier.
 - `mcp-tool-server` -- real MCP server on streamable-HTTP transport (not
   stdio), one tool (`lookup_price`), bare OTel, zero manual spans.
 - `otel-collector` -- self-contained in this repo, forwards to groundcover.
@@ -19,109 +26,132 @@ boundary, an agent-to-tool (MCP) boundary, and an agent-to-LLM boundary.
 ## Architecture
 
 ```mermaid
-flowchart LR
-    U([curl / demo trigger])
+flowchart TB
+    U([curl /run-task]) --> A1
 
-    subgraph bare["bare OTel"]
-        A1[agent1]
+    subgraph nsA["namespace: mcp-agent-tracing (agents)"]
+        A1[agent1<br/>orchestrator, bare OTel]
+        A3[agent3<br/>summarizer, bare OTel]
+        A3O[agent3-openllmetry<br/>summarizer, OpenLLMetry]
+        A4[agent4<br/>auditor, custom hand-rolled spans]
+        OC[otel-collector]
     end
-    subgraph oll["OTel + OpenLLMetry"]
-        A1O[agent1-openllmetry]
+
+    subgraph nsB["namespace: mcp-agent-tracing-platform (tools)"]
+        A2[agent2<br/>tool-caller, bare OTel]
+        MCP[mcp-tool-server]
     end
 
-    A2[agent2]
-    MCP[mcp-tool-server]
-    LLM[["Anthropic API<br/>(or FAKE_LLM local responder)"]]
-    OC[otel-collector]
-    GC[("groundcover")]
+    A1 -. "phase 1 (concurrent)" .-> A2
+    A1 -. "phase 1 (concurrent)" .-> A4
+    A1 -. "phase 2 (concurrent, needs agent2's result)" .-> A3
+    A1 -. "phase 2 (concurrent, needs agent2's result)" .-> A3O
+    A2 -->|"MCP tools/call<br/>(streamable-HTTP)"| MCP
 
-    U -->|POST /run-task| A1
-    U -->|POST /run-task| A1O
-
-    A1 -->|"MCP tools/call<br/>(streamable-HTTP)"| MCP
-    A1 -->|"POST /lookup<br/>(httpx)"| A2
-    A1 -->|messages.create| LLM
-
-    A1O -->|"MCP tools/call<br/>(streamable-HTTP)"| MCP
-    A1O -->|"POST /lookup<br/>(httpx)"| A2
-    A1O -->|messages.create| LLM
-
-    A1 -. OTLP .-> OC
-    A1O -. OTLP .-> OC
-    A2 -. OTLP .-> OC
-    MCP -. OTLP .-> OC
-    OC -->|otlphttp| GC
+    A1 --> OC
+    A2 -.cross-ns OTLP.-> OC
+    A3 --> OC
+    A3O --> OC
+    A4 --> OC
+    MCP -.cross-ns OTLP.-> OC
 ```
 
-All of it (agent1, agent1-openllmetry, agent2, mcp-tool-server,
-otel-collector) runs in its own `mcp-agent-tracing` namespace in the
-cluster, separate from unrelated cluster resources.
+One `/run-task` call fans out in two concurrent phases and produces ONE
+trace containing all six services and all three instrumentation tiers
+as branches under `agent1`'s root span -- no need to trigger separate
+endpoints to compare bare OTel vs. OpenLLMetry vs. custom spans, it's
+all in one trace. Confirmed empirically (see "Fan-out, verified" below),
+not assumed.
+
+`agent2` and `mcp-tool-server` live in a second namespace
+(`mcp-agent-tracing-platform`) -- a real "agent team" vs. "platform/tools
+team" boundary. The `agent1 -> agent2` hop, and `agent2`/`mcp-tool-server`'s
+own OTLP export back to the collector, are genuine cross-namespace
+network calls using FQDNs (`<svc>.<namespace>.svc.cluster.local`), not
+same-namespace short-name DNS.
 
 ### Request flow
 
 ```mermaid
 sequenceDiagram
     participant U as curl
-    participant A1 as agent1 (either variant)
-    participant M as mcp-tool-server
-    participant A2 as agent2
-    participant L as Anthropic API / FAKE_LLM
+    participant A1 as agent1
+    participant A2 as agent2 (other ns)
+    participant M as mcp-tool-server (other ns)
+    participant A3 as agent3
+    participant A3O as agent3-openllmetry
+    participant A4 as agent4
 
     U->>A1: POST /run-task
-    A1->>M: MCP tools/call lookup_price (streamable-HTTP)
-    M-->>A1: price result
-    A1->>A2: POST /lookup (httpx)
-    A2-->>A1: in_stock
-    A1->>L: POST /v1/messages
-    L-->>A1: summary + usage
-    A1-->>U: tool_call + agent2_call + llm_summary
+    par phase 1
+        A1->>A2: POST /lookup (cross-namespace)
+        A2->>M: MCP tools/call lookup_price
+        M-->>A2: price result
+        A2-->>A1: tool_result
+    and
+        A1->>A4: POST /audit
+        A4-->>A1: audit_id + decision
+    end
+    par phase 2 (needs agent2's real result)
+        A1->>A3: POST /summarize
+        A3-->>A1: summary (bare OTel)
+    and
+        A1->>A3O: POST /summarize
+        A3O-->>A1: summary (OpenLLMetry)
+    end
+    A1-->>U: aggregated result
 ```
 
-### One call, two span sets
+### One trace, three instrumentation tiers
 
 ```mermaid
 flowchart TB
-    call["anthropic_client.messages.create() -- one call"]
-    call --> bareBranch["bare OTel<br/>(httpx auto-instrumentation only)"]
-    call --> ollBranch["+ OpenLLMetry<br/>(added to the SAME TracerProvider)"]
-    bareBranch --> bareSpan["POST span:<br/>http.method, http.url, http.status_code"]
-    ollBranch --> ollSpan1["POST span<br/>(same as bare -- OpenLLMetry doesn't replace it)"]
-    ollBranch --> ollSpan2["anthropic.chat span:<br/>gen_ai.request.model, gen_ai.usage.*,<br/>gen_ai.input/output.messages"]
+    T[agent1's trace]
+    T --> bare["agent3: bare OTel<br/>POST span only -- http.method/url/status_code"]
+    T --> oll["agent3-openllmetry: + OpenLLMetry<br/>same POST span, PLUS anthropic.chat<br/>(gen_ai.request.model, gen_ai.usage.*, gen_ai.input/output.messages)"]
+    T --> custom["agent4: hand-rolled custom span<br/>audit.id, audit.sku, audit.decision, audit.reviewer<br/>-- no SDK, exactly what we decided mattered"]
 ```
 
-Both span sets land on the exact same `trace_id` -- confirmed empirically,
-not assumed (see "OpenLLMetry, measured" below).
+## Fan-out, verified
+
+Fan-out is two concurrent phases, not four fully-independent calls,
+because `agent3`/`agent3-openllmetry` summarize `agent2`'s *actual* tool
+result -- they need it to exist first. `agent4` doesn't depend on
+anyone else's result, so it runs alongside `agent2` in phase 1 instead
+of waiting behind it. Confirmed by reading the actual span tree: all
+four downstream `POST` spans from `agent1` share the same `parent_id`
+(`agent1`'s root `POST /run-task` span) -- true sibling branches, not a
+chain -- and one `trace_id` spans all six services across both
+namespaces, verified directly in groundcover.
 
 ## Quickstart
 
 ```bash
-# 1. local sanity check
-docker compose up --build
-curl -X POST http://localhost:9001/run-task          # bare OTel
-curl -X POST http://localhost:9011/run-task          # OpenLLMetry
+# 1. local sanity check (single flat network -- no namespace concept in compose)
+FAKE_LLM=1 docker compose up --build
+curl -X POST http://localhost:9001/run-task
 
 # 2. build + push (via GitHub Actions -- see .github/workflows/build-push.yml)
 git push   # triggers multi-arch (amd64+arm64) build+push automatically
 # or: gh workflow run build-push.yml
 
-# 3. deploy
+# 3. deploy -- two namespaces
 kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/namespace-platform.yaml
 kubectl create secret generic groundcover-token --from-literal=token='<token>' -n mcp-agent-tracing
 kubectl create secret generic anthropic-api-key --from-literal=key='<key>' -n mcp-agent-tracing   # optional -- see FAKE_LLM below
 kubectl create configmap otel-collector-config --from-file=config.yaml=otel-collector-config.yaml -n mcp-agent-tracing
 kubectl apply -f k8s/otel-collector.yaml -n mcp-agent-tracing
-kubectl apply -f k8s/manifests.yaml -n mcp-agent-tracing
+kubectl apply -f k8s/manifests.yaml   # no -n flag -- every object carries its own namespace
 
 # 4. trigger
 kubectl port-forward svc/agent1 19001:9001 -n mcp-agent-tracing &
-kubectl port-forward svc/agent1-openllmetry 19011:9001 -n mcp-agent-tracing &
 curl -X POST http://127.0.0.1:19001/run-task
-curl -X POST http://127.0.0.1:19011/run-task
 ```
 
-Local ports are deliberately non-standard (19001/19011) to avoid
-collisions with anything else already bound to 9001 on your machine --
-see "Watch out for" below.
+Local port is deliberately non-standard (19001) to avoid collisions with
+anything else already bound to 9001 on your machine -- see "Watch out
+for" below.
 
 ## Tracing: OTLP by default, JSON file as fallback
 
@@ -165,12 +195,12 @@ empirically, by matching `trace_id`/`parent_id` between the spans below.
 
 Bare OTel auto-instrumentation and OpenLLMetry **cannot coexist in one
 process** -- `Traceloop.init()` patches instrumentation process-wide.
-That's why `agent1` and `agent1-openllmetry` are two separate, permanent
+That's why `agent3` and `agent3-openllmetry` are two separate, permanent
 deployments sharing one codebase (`SERVICE_NAME` and `ENABLE_OPENLLMETRY`
 are the only things that differ), rather than one agent that's edited in
 place -- so the "before" state never gets lost.
 
-**Bare OTel** (`agent1`) on the LLM call -- one generic span, nothing
+**Bare OTel** (`agent3`) on the LLM call -- one generic span, nothing
 LLM-specific:
 
 ```
@@ -180,7 +210,7 @@ http.url: http://127.0.0.1:9091/v1/messages
 http.status_code: 200
 ```
 
-**OTel + OpenLLMetry** (`agent1-openllmetry`) on the exact same call --
+**OTel + OpenLLMetry** (`agent3-openllmetry`) on the exact same call --
 the generic `POST` span above still exists (OpenLLMetry adds, it doesn't
 replace), plus a new `anthropic.chat` span, same `trace_id`:
 
@@ -199,17 +229,33 @@ gen_ai.usage.output_tokens: 12
 gen_ai.usage.total_tokens: 54
 ```
 
-Cross-service trace continuity (`agent1`/`agent1-openllmetry` ->
-`agent2` -> `mcp-tool-server`) holds for both variants -- verified
-directly in groundcover, not just locally.
+## agent4: the third tier, hand-rolled
+
+No SDK, no auto-instrumentation beyond bare FastAPI for the inbound
+request -- just a few lines of `tracer.start_as_current_span(...)` with
+attributes we picked ourselves:
+
+```
+Name: audit.record_decision
+audit.id: <uuid>
+audit.sku: SKU-4471
+audit.decision: approved
+audit.reviewer: agent-4-automated
+```
+
+That's the spectrum in one trace: bare auto-instrument gets you nothing
+beyond generic HTTP shape; OpenLLMetry gets you a comprehensive
+vendor-standard attribute set for free; hand-rolling gets you exactly
+what you decided mattered, and nothing else, with a few lines of code
+and no dependency.
 
 ## FAKE_LLM: a real fallback, not a code-level mock
 
 `FAKE_LLM=1` swaps the real Anthropic API for a **real local loopback
-HTTP server** (`http.server.ThreadingHTTPServer` on `127.0.0.1:9091`)
-returning a canned response. It's a demo-reliability fallback for flaky
-wifi, rate limits, or a dead key mid-talk -- not a way to fake the
-tracing story.
+HTTP server** (`http.server.ThreadingHTTPServer` on `127.0.0.1:9091`,
+inside `agent3`/`agent3-openllmetry`) returning a canned response. It's
+a demo-reliability fallback for flaky wifi, rate limits, or a dead key
+mid-talk -- not a way to fake the tracing story.
 
 This matters because of what it's *not*: an `httpx.MockTransport`-based
 mock. Testing both showed `HTTPXClientInstrumentor` patches httpx's
@@ -225,12 +271,12 @@ method, not the transport.
 
 - **MCP's client transport uses a separate library (`httpx2`, not
   `httpx`) internally**, so standard `opentelemetry-instrumentation-httpx`
-  produces zero generic HTTP spans for the agent-to-tool leg -- no status
-  code, no transport-level latency. The MCP-specific spans still connect
-  correctly (via the SDK's own internal tracing), they just don't carry
-  those attributes. Confirmed by comparing the agent-to-agent leg (full
-  `http.*` attributes) against the agent-to-tool leg (none) on the same
-  trace.
+  produces zero generic HTTP spans for the agent-to-tool leg (`agent2` ->
+  `mcp-tool-server`) -- no status code, no transport-level latency. The
+  MCP-specific spans still connect correctly (via the SDK's own internal
+  tracing), they just don't carry those attributes. Confirmed by
+  comparing the agent-to-agent leg (full `http.*` attributes) against
+  the agent-to-tool leg (none) on the same trace.
 - **`notifications/initialized` gets a disconnected `trace_id`.** The MCP
   client's post-`initialize` notification produces a span with a brand
   new `trace_id` and a null parent -- silently orphaned from the rest of
@@ -247,14 +293,12 @@ method, not the transport.
   this pinned `mcp==2.0.0`. It bundles `opentelemetry-instrumentation-mcp`,
   which expects `mcp.client.streamable_http.streamablehttp_client` (an
   older/different SDK naming convention); our SDK actually exposes
-  `streamable_http_client`. Confirmed in the real `agent1-openllmetry`
-  pod's logs: `ERROR:root:Error initializing MCP instrumentor: module
+  `streamable_http_client`. Confirmed in the real pod logs:
+  `ERROR:root:Error initializing MCP instrumentor: module
   'mcp.client.streamable_http' has no attribute 'streamablehttp_client'`.
-  It doesn't crash, it just never instruments -- which is *part* of why
-  the MCP leg is identical between `agent1` and `agent1-openllmetry` (the
-  other part being that MCP's own SDK already tags `tools/call` spans
-  with `gen_ai.operation.name: execute_tool`, independent of OpenLLMetry
-  entirely -- see mcp-tool-server's spans in either trace).
+  It doesn't crash, it just never instruments. (Moot now that the MCP
+  call lives in plain-bare-OTel `agent2` rather than an OpenLLMetry-enabled
+  process, but the failure mode is real and worth knowing regardless.)
 - **OpenLLMetry's logs-instead-of-attributes path
   (`Traceloop.init(use_attributes=False)`) needs `opentelemetry._events`,
   which doesn't exist in the pinned `opentelemetry-api==1.44.0`** (the
@@ -263,19 +307,27 @@ method, not the transport.
   to attributes -- it silently drops `gen_ai.input.messages`/
   `gen_ai.output.messages` with nowhere for them to land. A real
   capability, not reachable at these pinned versions.
+- **Cross-namespace DNS worked cleanly, no NetworkPolicy or resolution
+  issue** -- worth stating plainly since two earlier phases of this
+  build *did* hit a real gap the moment a boundary was crossed (arch
+  mismatch, host-binding). This one just worked. The one thing that
+  actually changes going cross-namespace is using the FQDN
+  (`agent2.mcp-agent-tracing-platform.svc.cluster.local`) instead of the
+  short name that resolves fine same-namespace -- get that wrong and
+  it's a DNS failure, not a tracing failure, but it'll look like a
+  broken trace if you don't know to check DNS first.
 
 ## Watch out for
 
 - **Set resource requests/limits, especially on a shared/constrained
   node.** Pods with none get `BestEffort` QoS -- the kernel's first
-  OOM-kill target under memory pressure. Both `agent1` and
-  `agent1-openllmetry` got OOMKilled (exit 137) in the cluster before
-  `k8s/manifests.yaml` had a `resources:` block, on a node that was
-  already at 80% memory requested / 166% memory limits from unrelated
-  workloads sharing it. Not specific to OpenLLMetry's heavier dependency
-  footprint (agent1-openllmetry does get a larger allowance for that
-  reason, but bare agent1 got killed too) -- it's a shared-cluster
-  reliability issue, not an app bug.
+  OOM-kill target under memory pressure. Both instrumentation-tier agents
+  got OOMKilled (exit 137) in the cluster before `k8s/manifests.yaml` had
+  a `resources:` block, on a node that was already at 80% memory
+  requested / 166% memory limits from unrelated workloads sharing it.
+  Not specific to OpenLLMetry's heavier dependency footprint (the bare
+  variant got killed too) -- it's a shared-cluster reliability issue,
+  not an app bug.
 - **Cross-arch images.** GitHub Actions' default runners build `amd64`
   only; if your cluster node is ARM64 (e.g. a UTM VM on Apple Silicon),
   the pods will sit in `ImagePullBackOff` with "no match for platform in
