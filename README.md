@@ -192,6 +192,109 @@ That's the mechanism a platform like groundcover likely uses to
 correlate an eBPF-only hop back to the real application trace in its UI,
 even without a shared raw `trace_id` underneath.
 
+## Fault tests: what actually breaking things looks like
+
+Everything above is the happy path. `POST /run-task` with an optional
+JSON body `{"fault": "<name>"}` deliberately breaks one specific leg --
+no redeploy, safe to flip live mid-talk. `agent1` threads the same
+`fault` value to every downstream call; each only acts on it if it's the
+one that fault targets. Three code-level faults, plus one real network
+failure tested separately (no code, just `kubectl scale`) -- all four
+produce genuinely different signatures, not variations on one theme.
+
+### `{"fault": "tool_error"}` -- mcp-tool-server raises
+
+`execute_task` raises for this call. Confirmed by testing (don't
+assume): MCP does **not** propagate this as a client-side exception --
+`session.call_tool()` returns normally, with `is_error=True` on the
+result and the error text inside `content`. (Caught a real bug in this
+demo's own fault-test code here: this SDK uses snake_case `is_error`,
+not the wire protocol's camelCase `isError` -- my first attempt checked
+the wrong name and silently always read `False`.)
+
+The failure *is* visible in the trace -- but only right at the source:
+`mcp-tool-server`'s own `tools/call execute_task` span gets `status:
+error`. Every layer above that stays healthy: `agent2`'s client-side MCP
+span, `agent2`'s own `POST /process` span, and `agent1`'s aggregate all
+stay `Unset`/200, because `agent2` catches this and reports
+`tool_error: true` inline rather than raising.
+
+### `{"fault": "llm_error"}` -- the fake LLM responder returns 500
+
+The most instructive bug in this whole set was in the fault-injection
+code itself, not the app: a single-shot "fail the next call" flag got
+silently absorbed, every time, with `error: null` in the response as if
+nothing happened. Cause: the `anthropic` SDK retries 5xx automatically
+(`max_retries=2` by default) -- attempt 1 hits the fault and consumes
+the flag, attempts 2 and 3 hit a healthy responder and succeed. Fixed by
+holding the fault for the *whole* call instead of resetting after one
+hit, so every retry attempt also fails and the real exception surfaces.
+
+With that fixed, the bare-vs-OpenLLMetry contrast on an **actual
+failure** is sharper than the happy-path one:
+
+- **Bare OTel** (`agent3`): three generic `POST` spans (one per retry
+  attempt, confirming the retry count directly), each `status: error`,
+  with **no message content at all** -- just a category, no indication
+  of what actually went wrong.
+- **OpenLLMetry** (`agent3-openllmetry`): the `anthropic.chat` span gets
+  `status: error`, `error.type: InternalServerError`, and a full OTel
+  exception *event* -- `exception.type`, `exception.message`, and a
+  complete Python stack trace -- plus the original `gen_ai.input.messages`
+  that was being summarized when it failed. In a real incident, knowing
+  *why* something failed matters more than knowing *that* it failed;
+  this is the sharpest version of the bare-vs-OpenLLMetry story in the
+  whole demo.
+
+### `{"fault": "agent_error"}` -- agent4 raises an unhandled 500
+
+Confirmed precisely, three layers deep:
+- `agent4`'s own `POST /audit` span: `status: error`, `http_status_code: 500`.
+- `agent1`'s outbound client span *to* agent4: also `status: error` --
+  `HTTPXClientInstrumentor` correctly flags the 5xx response on the
+  caller's side too.
+- `agent1`'s own root span, and the HTTP response `curl` actually gets:
+  **200**, with the 500's JSON body (`{"detail": "deliberate agent4
+  failure for fault test"}`) embedded inside `agent4_call` as if it were
+  a normal result.
+
+The gap here isn't in observability -- the Error-status spans are
+correctly there, at both ends of the failing call. The gap is that
+`agent1`'s code never calls `resp.raise_for_status()` or checks
+`resp.status_code`, so nothing in the application ever looks at the
+signal that's already sitting right there in the trace.
+
+### Real network failure -- `kubectl scale deployment agent5 --replicas=0`
+
+No code, no fault flag -- an actual downstream outage. This one doesn't
+get silently absorbed at all: `/run-task` itself returns **500**
+(`Internal Server Error`, no JSON body -- Starlette's own default
+handler, since nothing in `agent1` catches this). Confirmed the exact
+mechanics in groundcover, not just the end result:
+
+- `agent1`'s **root** `POST /run-task` span: `status: error`, with a
+  full exception event -- `exception.type: httpx.ConnectError`,
+  message `"All connection attempts failed"`, and a stack trace that
+  names the exact line in `agent1.py` that raised it.
+- `agent1`'s client span for the call *to agent5*: same exception,
+  `status: error` -- the actual point of failure.
+- `agent1`'s client span for the **concurrent** call to agent4 (a
+  sibling in the same `asyncio.gather()`, not the one that failed):
+  *also* `status: error`, but with a **different** exception --
+  `httpx.ReadError`. That's `asyncio.gather()`'s cancel-siblings-on-first-exception
+  behavior made visible: agent4's in-flight request got cut off mid-read
+  when agent5's failure cancelled the whole gather, and that cancellation
+  has its own distinct signature in the trace.
+
+This is the one scenario in the whole set where the failure is loud
+everywhere -- root span, every relevant child span, and the HTTP
+response itself all agree something broke. Contrast that with the three
+code-level faults above, all of which return 200 with the failure
+quietly sitting inside the JSON payload. The difference isn't
+"observability works here and not there" -- auto-instrumentation
+correctly flags every one of these as an Error span. The difference is
+whether the *application* raises, or catches and moves on.
+
 ## Quickstart
 
 ```bash
