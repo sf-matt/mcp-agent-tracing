@@ -17,7 +17,7 @@ import logging
 import os
 import uuid
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from tracing_lib import setup_tracing
@@ -33,6 +33,17 @@ FastAPIInstrumentor.instrument_app(app)
 async def audit(request: Request):
     body = await request.json()
     task_id = body.get("task_id", "unknown")
+    fault = body.get("fault")
+
+    # agent_error fault: an unhandled 500, on purpose, to see what
+    # agent1 actually does with a failing fan-out branch. agent1's _post()
+    # helper does resp.json() with no status check, so this doesn't fail
+    # agent1's own request at all -- it's silently absorbed into the
+    # aggregate response as agent4_call, and the overall /run-task still
+    # returns 200. That's the finding: a real error, invisible unless you
+    # look at the content, not just the status code.
+    if fault == "agent_error":
+        raise HTTPException(status_code=500, detail="deliberate agent4 failure for fault test")
 
     with tracer.start_as_current_span("audit.record_decision") as span:
         audit_id = str(uuid.uuid4())

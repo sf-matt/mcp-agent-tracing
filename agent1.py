@@ -23,13 +23,22 @@ comparison lives in agent3 vs. agent3-openllmetry (see tracing_lib.py's
 ENABLE_OPENLLMETRY); agent4 carries the third instrumentation tier
 (hand-rolled custom spans, no SDK, see agent4.py); agent5 carries the
 fourth: nothing at all, see agent5.py.
+
+Fault injection: POST /run-task with an optional JSON body
+{"fault": "<name>"} to deliberately break one leg of the fan-out --
+no redeploy needed, safe to flip live:
+  tool_error  -- mcp-tool-server raises for this task_id (via agent2)
+  llm_error   -- the FAKE_LLM responder returns 500 (agent3/agent3-openllmetry)
+  agent_error -- agent4 raises an unhandled 500
+See README's "Fault tests" section for what each one actually does to
+the trace and to this response.
 """
 
 import asyncio
 import logging
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 import httpx
@@ -57,16 +66,20 @@ async def _post(client, url, json_body):
 
 
 @app.post("/run-task")
-async def run_task():
-    logging.info("run_task started")
+async def run_task(request: Request):
+    raw = await request.body()
+    fault = (await request.json()).get("fault") if raw else None
+    logging.info("run_task started, fault=%s", fault)
+
     async with httpx.AsyncClient() as client:
         # phase 1: agent2 (needs to run first -- its result feeds phase 2),
         # agent4 (audit, independent), and agent5 (ghost, independent --
         # and instrumented with nothing, so this call never joins the
-        # trace from agent5's side) concurrently.
+        # trace from agent5's side) concurrently. fault is passed to all
+        # three; each only acts on it if it's the one that fault targets.
         agent2_result, agent4_result, agent5_result = await asyncio.gather(
-            _post(client, AGENT2_URL, {"query": f"process {TASK_ID}", "task_id": TASK_ID}),
-            _post(client, AGENT4_URL, {"task_id": TASK_ID}),
+            _post(client, AGENT2_URL, {"query": f"process {TASK_ID}", "task_id": TASK_ID, "fault": fault}),
+            _post(client, AGENT4_URL, {"task_id": TASK_ID, "fault": fault}),
             _post(client, AGENT5_URL, {"task_id": TASK_ID}),
         )
         logging.info("phase 1 complete: agent2=%s agent4=%s agent5=%s", agent2_result, agent4_result, agent5_result)
@@ -75,8 +88,8 @@ async def run_task():
         # real tool result -- directly comparable spans on one trace.
         summarize_text = f"tool result for {TASK_ID}: {agent2_result.get('tool_result')}"
         agent3_result, agent3_oll_result = await asyncio.gather(
-            _post(client, AGENT3_URL, {"text": summarize_text}),
-            _post(client, AGENT3_OPENLLMETRY_URL, {"text": summarize_text}),
+            _post(client, AGENT3_URL, {"text": summarize_text, "fault": fault}),
+            _post(client, AGENT3_OPENLLMETRY_URL, {"text": summarize_text, "fault": fault}),
         )
         logging.info("phase 2 complete: agent3=%s agent3-openllmetry=%s", agent3_result, agent3_oll_result)
 

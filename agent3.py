@@ -40,9 +40,33 @@ app = FastAPI()
 FastAPIInstrumentor.instrument_app(app)
 HTTPXClientInstrumentor().instrument()  # patches httpx.AsyncClient / httpx.Client
 
+_fail_llm_calls = False  # fault-injection flag for the llm_error demo,
+# read by the fake handler below. Held True for the DURATION of the
+# /summarize call (see finally: below), not just the first hit -- the
+# anthropic SDK retries 5xx errors automatically (max_retries=2 by
+# default), so a single-shot failure gets silently absorbed by the
+# retry and never reaches our own error handling. Confirmed by testing:
+# a one-shot flag produced summary=..., error=null every time. Holding
+# the fault for the whole call means every retry attempt also fails,
+# exhausting the SDK's retries so the real exception surfaces. Not
+# thread-safe against concurrent requests to this one process -- fine
+# for a single-request-at-a-time demo trigger, not a general pattern.
+
 if os.environ.get("FAKE_LLM"):
     class _FakeAnthropicHandler(BaseHTTPRequestHandler):
         def do_POST(self):
+            if _fail_llm_calls:
+                body = json.dumps({
+                    "type": "error",
+                    "error": {"type": "api_error", "message": "deliberate fault for demo (llm_error)"},
+                }).encode()
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             body = json.dumps({
                 "id": "msg_fake_demo",
                 "type": "message",
@@ -70,19 +94,30 @@ else:
 
 @app.post("/summarize")
 async def summarize(request: Request):
+    global _fail_llm_calls
     body = await request.json()
     text = body.get("text", "")
-    logging.info("summarize started for text: %s", text)
+    fault = body.get("fault")
+    logging.info("summarize started for text: %s fault=%s", text, fault)
 
-    message = await anthropic_client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        messages=[{"role": "user", "content": f"In one short sentence, summarize this: {text}"}],
-    )
-    summary = message.content[0].text
-    logging.info("summarize complete: %s", summary)
+    if fault == "llm_error":
+        _fail_llm_calls = True
+    try:
+        message = await anthropic_client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=100,
+            messages=[{"role": "user", "content": f"In one short sentence, summarize this: {text}"}],
+        )
+        summary = message.content[0].text
+        error = None
+    except Exception as e:
+        summary = None
+        error = f"{type(e).__name__}: {e}"
+    finally:
+        _fail_llm_calls = False
 
-    return {"agent": SERVICE_NAME, "summary": summary}
+    logging.info("summarize complete: %s (error=%s)", summary, error)
+    return {"agent": SERVICE_NAME, "summary": summary, "error": error}
 
 
 if __name__ == "__main__":

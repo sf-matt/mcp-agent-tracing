@@ -18,9 +18,17 @@ mcp = MCPServer("generic-tool-server")
 
 
 @mcp.tool()
-def execute_task(task_id: str) -> dict:
-    """Execute a task by ID. Pure business logic, no manual tracing code."""
-    logging.info("execute_task called for task_id=%s", task_id)
+def execute_task(task_id: str, fail: bool = False) -> dict:
+    """Execute a task by ID. Pure business logic, no manual tracing code.
+
+    fail=True is a fault-injection hook for the tool_error demo -- raises
+    to show what an MCP tool-execution error actually looks like on the
+    wire, given the already-documented gap that this leg carries no
+    generic http.* attributes at all (httpx2, not httpx).
+    """
+    logging.info("execute_task called for task_id=%s fail=%s", task_id, fail)
+    if fail:
+        raise ValueError(f"deliberate failure for task_id={task_id}")
     return {"task_id": task_id, "status": "completed", "output": 42}
 
 

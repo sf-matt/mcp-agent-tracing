@@ -36,16 +36,31 @@ async def process(request: Request):
     body = await request.json()
     query = body.get("query", "")
     task_id = body.get("task_id", "task-x")
-    logging.info("process received query: %s", query)
+    fault = body.get("fault")
+    logging.info("process received query: %s fault=%s", query, fault)
 
+    tool_error = False
     async with streamable_http_client(TOOL_SERVER_URL) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            tool_result = await session.call_tool("execute_task", arguments={"task_id": task_id})
-            result_text = str(tool_result.content)
+            try:
+                tool_result = await session.call_tool(
+                    "execute_task", arguments={"task_id": task_id, "fail": fault == "tool_error"}
+                )
+                result_text = str(tool_result.content)
+                # MCP distinguishes tool-execution errors (is_error=True,
+                # still a normal call_tool() return -- confirmed by testing;
+                # this mcp SDK uses snake_case, not the wire protocol's
+                # camelCase isError) from protocol-level errors (an actual
+                # raised exception) -- check for both rather than assume
+                # which one a raised tool exception produces.
+                tool_error = bool(getattr(tool_result, "is_error", False))
+            except Exception as e:
+                result_text = f"tool call raised: {e}"
+                tool_error = True
 
-    logging.info("process complete: %s", result_text)
-    return {"agent": "agent-2", "query": query, "tool_result": result_text}
+    logging.info("process complete: %s (tool_error=%s)", result_text, tool_error)
+    return {"agent": "agent-2", "query": query, "tool_result": result_text, "tool_error": tool_error}
 
 
 if __name__ == "__main__":
