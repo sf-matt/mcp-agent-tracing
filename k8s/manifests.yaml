@@ -270,3 +270,47 @@ metadata:
 spec:
   selector: {app: agent1}
   ports: [{port: 9001, targetPort: 9001}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent6
+  namespace: mcp-agent-tracing
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: agent6}
+  template:
+    metadata:
+      labels: {app: agent6}
+    spec:
+      containers:
+        - name: agent6
+          image: sfmatt/agent6:latest
+          ports: [{containerPort: 9006}]
+          # Anthropic's own hosting guidance recommends 1Gi RAM / 1 CPU
+          # per real agent session -- this is a one-shot, no-tool demo
+          # call, not a real session, so this is deliberately lighter.
+          # Real usage would need to size to their floor, not this.
+          resources:
+            requests: {memory: "256Mi", cpu: "100m"}
+            limits: {memory: "512Mi", cpu: "1000m"}
+          env:
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef: {name: anthropic-api-key, key: key, optional: true}
+            # Off by default -- matches most real deployments, and is
+            # the case bare OTel/OpenLLMetry can't see into at all. Flip
+            # to "1" to prove the CLI's own native export joins the
+            # trace (see README).
+            - {name: ENABLE_SDK_TELEMETRY, value: ""}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent6
+  namespace: mcp-agent-tracing
+spec:
+  selector: {app: agent6}
+  ports: [{port: 9006, targetPort: 9006}]

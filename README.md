@@ -12,6 +12,7 @@ None of this does real work. `execute_task` returns a hardcoded number, the LLM 
 - `agent4`: the auditor. Records a hand-rolled custom span, independent of whether the "real" work succeeded. The third instrumentation tier.
 - `agent5`: the ghost. Zero instrumentation -- stands in for the service that predates the tracing effort. Still makes a real LLM call of its own; whatever visibility exists for either hop comes from eBPF alone.
 - `mcp-tool-server`: real MCP server, streamable-HTTP, one tool (`execute_task`), bare OTel.
+- `agent6`: optional, standalone -- not part of the fan-out. Runs a real call through the actual Claude Agent SDK, the harness Claude Code runs on. See "agent6" near the end.
 - `otel-collector`: forwards to groundcover.
 
 ## Architecture
@@ -199,6 +200,24 @@ http_request_headers.x-api-key: "?"           <- the one redacted field
 Cost-accounting fields (`gen_ai_pricing_model_id`, per-token pricing) are present too, zeroed only because the call fails before consuming tokens.
 
 Nothing in the application says this broke -- `agent1` got its 200, `agent5` got its 200. eBPF is the only place the 401 exists at all: the exact prompt, the real response body and `request_id`, correct HTTP semantics, automatic provider classification, all captured independent of whether `agent5` ever chose to report anything.
+
+## agent6: a different pattern -- the real Claude Agent SDK
+
+Optional, standalone -- not wired into `agent1`'s plan. `agent6` runs one call through the actual Claude Agent SDK, the same harness Claude Code runs on: `query()` spawns a real `claude` CLI subprocess and pipes a prompt to it over stdio. The LLM call happens inside that subprocess, not in this process.
+
+Bare OTel here sees the inbound `POST /subprocess-task` span, same as every other agent -- and zero outbound span for the LLM call itself. There's no `httpx` call to patch: the subprocess makes the call, not this process. OpenLLMetry fares no better, since it patches the `anthropic` package's methods, and this SDK never touches that package here.
+
+eBPF's floor is lower here than anywhere else in this demo. It captures the DNS lookups for `api.anthropic.com` (any process in the pod triggers those) but zero record of the actual TLS connection -- confirmed twice, `is_external:true` returns nothing for this pod in the same window `agent5`'s identical call produced a fully-parsed `gen_ai.*` span. The OpenSSL-uprobe mechanism behind `agent5`'s result apparently attaches to already-running processes' loaded libraries, not one spawned fresh mid-request with its own bundled crypto stack.
+
+The CLI ships its own native OTel export, off by default (`ENABLE_SDK_TELEMETRY=1` here, which sets `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_TRACES_EXPORTER=otlp`, and `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`, required for traces specifically). When on, it genuinely joins the parent trace -- confirmed with real parent-child span IDs from the live deployment, not inferred: `claude_code.interaction`'s `parent_id` is `agent6`'s own root span ID, same `trace_id`, two `service.name`s cooperating correctly.
+
+Three different `workload` names exist for this one pod's activity -- `agent6` (eBPF, from the k8s object name), `agent-6` (this process's own OTel `service.name`), and `claude-code` (the subprocess's OTel `service.name`, Anthropic's default). Same naming split every other agent has between its eBPF and OTel identity, just three-way here instead of two.
+
+A real bug turned up along the way: `query()` raises a trailing exception even after a well-formed message stream, on a low-level `"error": "success"` wire quirk -- fixed by only falling back to the exception string if no real assistant text was collected first. Also worth knowing: `ResultMessage.subtype == "success"` doesn't mean the task succeeded -- `is_error` and `api_error_status` carry the real outcome.
+
+Weight: the bundled CLI binary is 291MB unpacked, ~76% of everything installed here, roughly 3x the size of the entire base Python image. Alpine doesn't shrink it -- pip falls back to building from source with no matching wheel, so no binary gets bundled at all and the SDK has nothing to spawn. That weight is the actual product being tested, not packaging overhead.
+
+Scale: this isn't a normal stateless fleet. Per Anthropic's own hosting guidance, one agent session maps to one subprocess, sized around 1 GiB RAM / 1 CPU per real session as a starting point, with sessions pinned to specific containers via consistent hashing on session ID -- closer to scaling a stateful game server than a typical microservice. Their own recommended path if you don't want to run this infrastructure yourself is a separate hosted product, Managed Agents.
 
 ## Quickstart
 
