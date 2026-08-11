@@ -1,25 +1,20 @@
 """
-Shared tracing setup for agent1, agent2, and the MCP tool server.
+Shared tracing setup for every service in this demo.
 
 Default export target is OTLP (OTEL_EXPORTER_OTLP_ENDPOINT), pointed at
-the in-cluster/in-compose otel-collector, which forwards to groundcover.
-If that env var isn't set, falls back to writing spans to a JSON-lines
-file per process -- useful for local debugging without a collector
-running, and for comparing trace_ids across processes by hand.
+the otel-collector. If unset, falls back to writing spans to a
+JSON-lines file per process -- useful for local debugging without a
+collector, and for comparing trace_ids across processes by hand.
 
 ENABLE_OPENLLMETRY layers OpenLLMetry (traceloop-sdk) onto the SAME
-TracerProvider set up below, rather than a separate one: Traceloop.init()
-checks the current global TracerProvider, and if it's already a real one
-(not the default ProxyTracerProvider), it attaches its own span processor
-to that existing provider instead of creating a new one. Passing our own
-OTLPSpanExporter into Traceloop.init(exporter=...) also stops it from
-defaulting to Traceloop's own SaaS endpoint.
+TracerProvider set up below: Traceloop.init() attaches its own span
+processor to the existing provider instead of creating a new one, and
+passing our own OTLPSpanExporter into it stops it from defaulting to
+Traceloop's SaaS endpoint.
 
-Logs (when OTEL_EXPORTER_OTLP_ENDPOINT is set) go through the OTel SDK's
-LoggingHandler, bridging Python's stdlib logging to an OTLP log exporter.
-LogRecord construction pulls trace_id/span_id from whatever span is
-currently active, so log lines emitted during a request auto-correlate
-with that request's trace -- no extra wiring needed.
+Logs (when OTLP is set) go through the OTel SDK's LoggingHandler,
+bridging stdlib logging to an OTLP log exporter -- log lines auto-
+correlate with the active span's trace_id, no extra wiring needed.
 """
 
 import json

@@ -1,16 +1,15 @@
 """
-agent-4: the auditor. On /audit it records an audit span for the
-incoming request -- no LLM call, no tool call, independent of the other
-three agents in the fan-out (safe to run concurrently with them).
+agent-4 -- the auditor
 
-This is the third instrumentation tier for the talk: bare auto-instrument
-gets you nothing beyond generic HTTP shape; OpenLLMetry gets you a
-comprehensive vendor-standard attribute set for free; this file shows the
-middle ground -- a few lines of tracer.start_as_current_span() with
-hand-picked attributes, no SDK, exactly what you decided mattered and
-nothing else. Uses the same tracing_lib.setup_tracing() as every other
-service; the "custom" part is entirely in what happens below, not in any
-special setup.
+Scenario:    compliance/audit-log step, independent of whether the
+             "real" work succeeded.
+Telemetry:   hand-rolled custom spans -- no vendor SDK, no
+             auto-instrumentation beyond bare FastAPI for the inbound
+             request.
+Boundary:    none -- no outbound call.
+Note:        third instrumentation tier -- bare gets generic HTTP
+             shape, OpenLLMetry gets a full attribute set for free,
+             this shows the hand-rolled middle ground.
 """
 
 import logging
@@ -35,13 +34,11 @@ async def audit(request: Request):
     task_id = body.get("task_id", "unknown")
     fault = body.get("fault")
 
-    # agent_error fault: an unhandled 500, on purpose, to see what
-    # agent1 actually does with a failing fan-out branch. agent1's _post()
-    # helper does resp.json() with no status check, so this doesn't fail
-    # agent1's own request at all -- it's silently absorbed into the
-    # aggregate response as agent4_call, and the overall /run-task still
-    # returns 200. That's the finding: a real error, invisible unless you
-    # look at the content, not just the status code.
+    # agent_error fault: unhandled 500 on purpose. agent1's _post() calls
+    # resp.json() with no status check, so this doesn't fail agent1's own
+    # request -- it's silently absorbed into agent4_call and /run-task
+    # still returns 200. The finding: a real error invisible unless you
+    # look at the content, not the status code.
     if fault == "agent_error":
         raise HTTPException(status_code=500, detail="deliberate agent4 failure for fault test")
 

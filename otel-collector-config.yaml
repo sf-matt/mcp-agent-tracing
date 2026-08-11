@@ -11,6 +11,19 @@ processors:
     timeout: 5s
     send_batch_size: 512
 
+  k8sattributes:
+    auth_type: "serviceAccount"
+    extract:
+      metadata:
+        - k8s.pod.name
+        - k8s.pod.uid
+        - k8s.namespace.name
+        - k8s.node.name
+        - k8s.deployment.name
+    pod_association:
+      - sources:
+          - from: connection
+
   resource/groundcover:
     attributes:
       - key: cluster
@@ -40,9 +53,9 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [resource/groundcover, batch]
+      processors: [k8sattributes, resource/groundcover, batch]
       exporters: [debug, otlphttp/groundcover]
     logs:
       receivers: [otlp]
-      processors: [resource/groundcover, batch]
+      processors: [k8sattributes, resource/groundcover, batch]
       exporters: [debug, otlphttp/groundcover]

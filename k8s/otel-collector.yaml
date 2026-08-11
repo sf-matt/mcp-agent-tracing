@@ -13,6 +13,37 @@ data:
   GC_CLUSTER: matthew-local
   GC_ENV: local
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector
+  namespace: mcp-agent-tracing
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-collector-k8s-attributes
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces", "nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-collector-k8s-attributes
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector
+    namespace: mcp-agent-tracing
+roleRef:
+  kind: ClusterRole
+  name: otel-collector-k8s-attributes
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,6 +57,7 @@ spec:
     metadata:
       labels: {app: otel-collector}
     spec:
+      serviceAccountName: otel-collector
       containers:
         - name: otel-collector
           image: otel/opentelemetry-collector-contrib:0.96.0

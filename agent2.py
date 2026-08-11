@@ -1,14 +1,12 @@
 """
-agent-2: the tool-caller. agent-1 calls this over real HTTP as its
-agent-to-agent leg; agent-2 in turn makes the real agent-to-tool call
-(MCP over streamable HTTP) to mcp-tool-server. Purpose shift from the
-original design: this used to be a trivial delegate that just echoed a
-canned answer; now it actually owns tool access, which is also why it
-moved into the platform namespace alongside mcp-tool-server rather than
-staying with the other agents.
+agent-2 -- the tool-caller
 
-Bare OTel auto-instrumentation only (FastAPI + httpx instrumentors) --
-no manual spans, no OpenLLMetry.
+Scenario:    calls a real system on agent1's behalf -- a database/API
+             lookup, standing in for execute_task.
+Telemetry:   bare OTel auto-instrumentation only.
+Boundary:    agent-to-agent (from agent1, cross-namespace) and
+             agent-to-tool (to mcp-tool-server, via MCP).
+Namespace:   mcp-agent-tracing-platform, with mcp-tool-server.
 """
 
 import logging
@@ -48,12 +46,9 @@ async def process(request: Request):
                     "execute_task", arguments={"task_id": task_id, "fail": fault == "tool_error"}
                 )
                 result_text = str(tool_result.content)
-                # MCP distinguishes tool-execution errors (is_error=True,
-                # still a normal call_tool() return -- confirmed by testing;
-                # this mcp SDK uses snake_case, not the wire protocol's
-                # camelCase isError) from protocol-level errors (an actual
-                # raised exception) -- check for both rather than assume
-                # which one a raised tool exception produces.
+                # is_error=True means the tool ran and returned an error
+                # (not a raised exception) -- this SDK uses snake_case,
+                # unlike the wire protocol's camelCase isError.
                 tool_error = bool(getattr(tool_result, "is_error", False))
             except Exception as e:
                 result_text = f"tool call raised: {e}"

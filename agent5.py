@@ -1,29 +1,40 @@
 """
-agent-5: the ghost. Deliberately ZERO OpenTelemetry -- no tracing_lib
-import, no instrumentation, no manual spans, nothing. Not even a
-logging call.
+agent-5 -- the ghost
 
-This is the floor of the instrumentation spectrum the other four agents
-sit above: bare auto-instrument (agent3), OpenLLMetry (agent3-openllmetry),
-hand-rolled custom spans (agent4). agent5 asks what's left when an
-agent does none of that at all -- the answer is whatever the platform's
-own eBPF sensor sees on the wire, independent of anything the app does.
-agent1's outbound call to this one still gets an httpx client span (that
-instrumentation lives on the CALLER), but nothing comes back the other
-way: no server-side span, no trace_id propagation, no participation in
-the trace at all. From the trace's point of view this hop goes nowhere.
+Scenario:    legacy/third-party service that predates the tracing effort,
+             never instrumented.
+Telemetry:   none. No SDK, no spans, no tracing_lib.
+Boundary:    agent-to-agent (from agent1) and agent-to-LLM (to Anthropic).
+Visibility:  eBPF only. Platform sensor decrypts TLS via an OpenSSL
+             uprobe and parses Anthropic's wire format into gen_ai.*
+             attributes -- see README.
+Note:        uses a deliberately invalid API key, and discards the
+             result either way -- agent1 always sees {"status": "done"}.
+             The real call still hits the wire either way; only eBPF
+             sees whether it actually worked.
 """
 
 import os
 from fastapi import FastAPI, Request
+from anthropic import AsyncAnthropic
 
 app = FastAPI()
+
+anthropic_client = AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", "sk-ant-invalid-demo-key-for-ebpf-test"))
 
 
 @app.post("/ghost-task")
 async def ghost_task(request: Request):
     body = await request.json()
     task_id = body.get("task_id", "unknown")
+    try:
+        await anthropic_client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=20,
+            messages=[{"role": "user", "content": f"Reply with one short word: is task {task_id} done?"}],
+        )
+    except Exception:
+        pass
     return {"agent": "agent-5", "task_id": task_id, "status": "done"}
 
 

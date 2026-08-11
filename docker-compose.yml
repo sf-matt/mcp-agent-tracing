@@ -77,4 +77,6 @@ services:
       AGENT4_URL: "http://agent4:9004/audit"
       AGENT5_URL: "http://agent5:9005/ghost-task"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      FAKE_LLM: "${FAKE_LLM:-}"
     depends_on: [agent2, agent3, agent3-openllmetry, agent4, agent5, otel-collector]

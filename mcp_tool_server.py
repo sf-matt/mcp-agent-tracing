@@ -1,9 +1,11 @@
 """
-MCP tool server, running on real HTTP transport (not stdio out for more realism).
+mcp-tool-server -- the tool
 
-Bare OTel only for step 1: no manual spans, no OpenLLMetry. Whatever
-telemetry we get here comes entirely from auto-instrumenting the HTTP
-layer -- FastAPI/Starlette server-side, and MCP's own internal handling.
+Scenario:    the system agent2 calls -- a database/API stand-in, via
+             the execute_task tool.
+Telemetry:   bare OTel only -- no manual spans, no OpenLLMetry.
+Boundary:    agent-to-tool, real MCP over streamable-HTTP transport
+             (not stdio), for more realism.
 """
 
 import logging
@@ -19,12 +21,11 @@ mcp = MCPServer("generic-tool-server")
 
 @mcp.tool()
 def execute_task(task_id: str, fail: bool = False) -> dict:
-    """Execute a task by ID. Pure business logic, no manual tracing code.
+    """Execute a task by ID. Pure business logic, no manual tracing.
 
-    fail=True is a fault-injection hook for the tool_error demo -- raises
-    to show what an MCP tool-execution error actually looks like on the
-    wire, given the already-documented gap that this leg carries no
-    generic http.* attributes at all (httpx2, not httpx).
+    fail=True is the tool_error fault hook -- raises to show what an
+    MCP tool-execution error looks like on the wire (this leg carries
+    no generic http.* attributes at all -- it's MCP, not HTTP).
     """
     logging.info("execute_task called for task_id=%s fail=%s", task_id, fail)
     if fail:

@@ -209,7 +209,13 @@ spec:
             requests: {memory: "50Mi", cpu: "50m"}
             limits: {memory: "128Mi", cpu: "500m"}
           # Deliberately no OTEL_EXPORTER_OTLP_ENDPOINT -- agent5 has no
-          # OTel code to read it anyway.
+          # OTel code to read it anyway. ANTHROPIC_API_KEY is optional --
+          # falls back to an invalid key in-code, which still produces a
+          # real TLS request/response for the eBPF-visibility test.
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef: {name: anthropic-api-key, key: key, optional: true}
 ---
 apiVersion: v1
 kind: Service
@@ -251,6 +257,10 @@ spec:
             - {name: AGENT4_URL, value: "http://agent4:9004/audit"}
             - {name: AGENT5_URL, value: "http://agent5:9005/ghost-task"}
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef: {name: anthropic-api-key, key: key, optional: true}
+            - {name: FAKE_LLM, value: "1"}
 ---
 apiVersion: v1
 kind: Service

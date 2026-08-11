@@ -1,22 +1,15 @@
 """
-agent-3: the summarizer. On /summarize it makes one real network hop:
-  agent-to-LLM: a real Anthropic API call summarizing whatever text it's given.
+agent-3 / agent-3-openllmetry -- the summarizer
 
-Bare OTel auto-instrumentation only in this file (FastAPIInstrumentor +
-HTTPXClientInstrumentor). Whether the LLM call shows up as anything more
-than a generic HTTP span depends entirely on ENABLE_OPENLLMETRY -- see
-tracing_lib.py. This same file runs as both the "agent3" (bare OTel) and
-"agent3-openllmetry" deployments; only that one env var differs.
-
-FAKE_LLM=1 swaps the real Anthropic API for a local loopback HTTP server
-returning a canned response -- a demo-reliability fallback for flaky
-wifi/rate limits, not a code-level mock. It's a REAL local HTTP call
-(genuine socket, genuine request/response), so httpx auto-instrumentation
-still sees a real "POST" span exactly like it would against the real API.
-A code-level mock (e.g. httpx.MockTransport) would NOT do this -- it
-bypasses HTTPXClientInstrumentor entirely, since that instrumentor patches
-httpx's default transport, not custom ones, silently erasing the span
-bare OTel would otherwise produce. Confirmed by testing both.
+Scenario:    turns agent2's result into a human-readable summary via a
+             real LLM call.
+Telemetry:   bare OTel (agent3) vs. OpenLLMetry (agent3-openllmetry) --
+             same codebase, ENABLE_OPENLLMETRY is the only difference.
+Boundary:    agent-to-LLM, a real Anthropic API call.
+Note:        FAKE_LLM=1 swaps the real API for a local loopback server
+             with a canned response -- a real socket call, so httpx
+             instrumentation still sees a real span (unlike
+             httpx.MockTransport, which bypasses it entirely).
 """
 
 import json
@@ -40,17 +33,12 @@ app = FastAPI()
 FastAPIInstrumentor.instrument_app(app)
 HTTPXClientInstrumentor().instrument()  # patches httpx.AsyncClient / httpx.Client
 
-_fail_llm_calls = False  # fault-injection flag for the llm_error demo,
-# read by the fake handler below. Held True for the DURATION of the
-# /summarize call (see finally: below), not just the first hit -- the
-# anthropic SDK retries 5xx errors automatically (max_retries=2 by
-# default), so a single-shot failure gets silently absorbed by the
-# retry and never reaches our own error handling. Confirmed by testing:
-# a one-shot flag produced summary=..., error=null every time. Holding
-# the fault for the whole call means every retry attempt also fails,
-# exhausting the SDK's retries so the real exception surfaces. Not
-# thread-safe against concurrent requests to this one process -- fine
-# for a single-request-at-a-time demo trigger, not a general pattern.
+_fail_llm_calls = False  # llm_error fault flag, read by the fake handler
+# below. Held True for the whole /summarize call (reset in finally:),
+# not just one hit -- the anthropic SDK retries 5xx automatically
+# (max_retries=2), so a one-shot flag gets silently absorbed by the
+# retry and never surfaces. Not thread-safe -- fine for one demo
+# request at a time, not a general pattern.
 
 if os.environ.get("FAKE_LLM"):
     class _FakeAnthropicHandler(BaseHTTPRequestHandler):
