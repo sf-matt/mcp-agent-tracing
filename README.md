@@ -251,6 +251,8 @@ Local port is non-standard (19001) to avoid colliding with anything else bound t
 
 Run `./demo.sh` (with that port-forward active) to step through the fault battery and the plan-override reveal one call at a time, pausing between each -- built for walking through live rather than typing curl commands on stage.
 
+For plain, no-fault calls -- narrating through the code, or firing the same call repeatedly to show real-key non-determinism -- use `./call.sh` (one call) or `./call.sh 5` (five calls, pausing between each).
+
 ## Tracing: OTLP by default, JSON file as fallback
 
 `tracing_lib.py` exports via OTLP (`OTEL_EXPORTER_OTLP_ENDPOINT`) to the otel-collector, which forwards to groundcover. If that env var is unset, it writes spans to a JSON-lines file per process instead.
