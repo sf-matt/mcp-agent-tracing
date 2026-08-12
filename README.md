@@ -253,6 +253,8 @@ Run `./demo.sh` (with that port-forward active) to step through the fault batter
 
 For plain, no-fault calls -- narrating through the code, or firing the same call repeatedly to show real-key non-determinism -- use `./call.sh` (one call) or `./call.sh 5` (five calls, pausing between each).
 
+To spotlight one agent in isolation -- bypassing `agent1`'s fan-out entirely, so the trace has no siblings -- use `./single.sh <agent2|agent3|agent3-openllmetry|agent4|agent5|agent6>`. It manages its own port-forward (starts it, makes the call, tears it down), so each tier is one command during a code walkthrough.
+
 ## Tracing: OTLP by default, JSON file as fallback
 
 `tracing_lib.py` exports via OTLP (`OTEL_EXPORTER_OTLP_ENDPOINT`) to the otel-collector, which forwards to groundcover. If that env var is unset, it writes spans to a JSON-lines file per process instead.
