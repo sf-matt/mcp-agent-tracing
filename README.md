@@ -249,6 +249,8 @@ curl -X POST http://127.0.0.1:19001/run-task -d '{"plan": ["process", "ghost"]}'
 
 Local port is non-standard (19001) to avoid colliding with anything else bound to 9001.
 
+Run `./demo.sh` (with that port-forward active) to step through the fault battery and the plan-override reveal one call at a time, pausing between each -- built for walking through live rather than typing curl commands on stage.
+
 ## Tracing: OTLP by default, JSON file as fallback
 
 `tracing_lib.py` exports via OTLP (`OTEL_EXPORTER_OTLP_ENDPOINT`) to the otel-collector, which forwards to groundcover. If that env var is unset, it writes spans to a JSON-lines file per process instead.
