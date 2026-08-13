@@ -23,6 +23,7 @@ Toggle:      ENABLE_SDK_TELEMETRY=1 turns on the CLI's own native OTel
              can't see into at all.
 """
 
+import asyncio
 import logging
 import os
 
@@ -43,11 +44,14 @@ HTTPXClientInstrumentor().instrument()
 
 def _sdk_env():
     env = {}
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        # No key at all makes the CLI fail client-side ("Not logged in")
-        # before ever reaching the wire -- confirmed by testing. An
-        # invalid-but-present key still makes a real network call, same
-        # reliability pattern as agent5.
+    if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        # No credential at all makes the CLI fail client-side ("Not
+        # logged in") before ever reaching the wire -- confirmed by
+        # testing. An invalid-but-present key still makes a real
+        # network call, same reliability pattern as agent5. Only
+        # inject this fallback if neither a real API key NOR a real
+        # CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) is set --
+        # otherwise this would clobber a real credential.
         env["ANTHROPIC_API_KEY"] = "sk-ant-invalid-demo-key-for-ebpf-test"
     if not os.environ.get("ENABLE_SDK_TELEMETRY"):
         return env
@@ -74,7 +78,8 @@ async def subprocess_task(request: Request):
 
     text_parts = []
     result_meta = {}
-    try:
+
+    async def _run():
         options = ClaudeAgentOptions(allowed_tools=[], env=_sdk_env())
         async for message in query(
             prompt=f"Task {task_id}. Reply with one short word: are you operational?",
@@ -90,7 +95,18 @@ async def subprocess_task(request: Request):
                 # api_error_status carry the real outcome; confirmed by
                 # testing with a deliberately invalid key, which still
                 # returns subtype="success" alongside is_error=True.
-                result_meta = {"is_error": message.is_error, "api_error_status": message.api_error_status}
+                result_meta["is_error"] = message.is_error
+                result_meta["api_error_status"] = message.api_error_status
+
+    try:
+        # The CLI retries auth failures up to 10x with exponential
+        # backoff (585ms doubling past 30s by attempt 7) -- confirmed
+        # by testing. A hard timeout here means a bad credential fails
+        # fast and predictably instead of hanging for minutes on stage.
+        await asyncio.wait_for(_run(), timeout=20)
+    except asyncio.TimeoutError:
+        if not text_parts:
+            text_parts = ["TimeoutError: no response within 20s (likely an auth retry loop)"]
     except Exception as e:
         # query() raises a trailing exception even after a well-formed
         # result stream, on a low-level "error: success" quirk in the

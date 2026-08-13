@@ -300,6 +300,14 @@ spec:
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef: {name: anthropic-api-key, key: key, optional: true}
+            # Alternative to ANTHROPIC_API_KEY, from `claude setup-token`
+            # -- the Agent SDK/CLI's own sanctioned headless-auth path,
+            # tied to a Claude subscription rather than console billing.
+            # Only agent6 can use this; the plain anthropic SDK agent3/
+            # agent5 use does not accept it.
+            - name: CLAUDE_CODE_OAUTH_TOKEN
+              valueFrom:
+                secretKeyRef: {name: claude-oauth-token, key: token, optional: true}
             # Off by default -- matches most real deployments, and is
             # the case bare OTel/OpenLLMetry can't see into at all. Flip
             # to "1" to prove the CLI's own native export joins the
