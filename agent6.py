@@ -43,6 +43,7 @@ def _sdk_env():
         "OTEL_EXPORTER_OTLP_ENDPOINT": endpoint,
         "OTEL_TRACES_EXPORT_INTERVAL": "1000",
         "OTEL_LOGS_EXPORT_INTERVAL": "1000",
+        "OTEL_METRIC_EXPORT_INTERVAL": "1000",
         "OTEL_LOG_USER_PROMPTS": "1",
         "OTEL_LOG_RAW_API_BODIES": "1",
         "OTEL_LOG_TOOL_DETAILS": "1",

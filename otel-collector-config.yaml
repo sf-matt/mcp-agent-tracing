@@ -59,3 +59,7 @@ service:
       receivers: [otlp]
       processors: [k8sattributes, resource/groundcover, batch]
       exporters: [debug, otlphttp/groundcover]
+    metrics:
+      receivers: [otlp]
+      processors: [k8sattributes, resource/groundcover, batch]
+      exporters: [debug, otlphttp/groundcover]
