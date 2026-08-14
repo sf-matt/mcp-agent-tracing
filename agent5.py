@@ -1,17 +1,11 @@
 """
-agent-5 -- the ghost
+the ghost
 
-Scenario:    legacy/third-party service that predates the tracing effort,
-             never instrumented.
+Scenario:    legacy/third-party service that predates the tracing effort, never instrumented.
 Telemetry:   none. No SDK, no spans, no tracing_lib.
 Boundary:    agent-to-agent (from agent1) and agent-to-LLM (to Anthropic).
-Visibility:  eBPF only. Platform sensor decrypts TLS via an OpenSSL
-             uprobe and parses Anthropic's wire format into gen_ai.*
-             attributes -- see README.
-Note:        uses a deliberately invalid API key, and discards the
-             result either way -- agent1 always sees {"status": "done"}.
-             The real call still hits the wire either way; only eBPF
-             sees whether it actually worked.
+Visibility:  eBPF only.
+Note:        uses a deliberately invalid API key, and discards the result either way.
 """
 
 import os

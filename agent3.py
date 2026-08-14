@@ -1,15 +1,10 @@
 """
-agent-3 / agent-3-openllmetry -- the summarizer
+the summarizer
 
-Scenario:    turns agent2's result into a human-readable summary via a
-             real LLM call.
-Telemetry:   bare OTel (agent3) vs. OpenLLMetry (agent3-openllmetry) --
-             same codebase, ENABLE_OPENLLMETRY is the only difference.
-Boundary:    agent-to-LLM, a real Anthropic API call.
-Note:        FAKE_LLM=1 swaps the real API for a local loopback server
-             with a canned response -- a real socket call, so httpx
-             instrumentation still sees a real span (unlike
-             httpx.MockTransport, which bypasses it entirely).
+Scenario:   turns agent2's result into a human-readable summary via a real LLM call.
+Telemetry:  bare OTel (agent3) vs. OpenLLMetry (agent3-openllmetry). ENABLE_OPENLLMETRY is the only difference.
+Boundary:   agent-to-LLM, a real Anthropic API call.
+Note:       FAKE_LLM=1 swaps the real API for a local loopback server with a canned response
 """
 
 import json
@@ -33,12 +28,7 @@ app = FastAPI()
 FastAPIInstrumentor.instrument_app(app)
 HTTPXClientInstrumentor().instrument()  # patches httpx.AsyncClient / httpx.Client
 
-_fail_llm_calls = False  # llm_error fault flag, read by the fake handler
-# below. Held True for the whole /summarize call (reset in finally:),
-# not just one hit -- the anthropic SDK retries 5xx automatically
-# (max_retries=2), so a one-shot flag gets silently absorbed by the
-# retry and never surfaces. Not thread-safe -- fine for one demo
-# request at a time, not a general pattern.
+_fail_llm_calls = False  
 
 if os.environ.get("FAKE_LLM"):
     class _FakeAnthropicHandler(BaseHTTPRequestHandler):

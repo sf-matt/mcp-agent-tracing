@@ -1,20 +1,11 @@
 """
-agent-1 -- the orchestrator
+the boss
 
-Scenario:    workflow entrypoint. Asks an LLM for a plan, then fans that
-             plan out to the other four agents, aggregates results.
-Telemetry:   bare OTel auto-instrumentation only (FastAPI + httpx).
-Boundary:    agent-to-LLM (the planning call) and agent-to-agent (the
-             fan-out that plan produces).
-Plan:        POST /run-task {"plan": ["process","audit","ghost"]}
-             scripts the LLM's response directly -- same real-call/
-             scripted-body pattern as agent3's FAKE_LLM, just applied to
-             a planning decision instead of a summary. Omit it and the
-             LLM (real, or FAKE_LLM's canned default) decides; a
-             missing/invalid response falls back to the full plan.
-Faults:      POST /run-task {"fault": "tool_error"|"llm_error"|
-             "agent_error"} breaks one leg live -- see README's
-             "Fault tests".
+Scenario:   workflow entrypoint. Asks an LLM for a plan, then fans that plan out to the other four agents, aggregates results.
+Telemetry:  bare OTel auto-instrumentation only (FastAPI + httpx).
+Boundary:   agent-to-LLM (the planning call) and agent-to-agent (the fan-out that plan produces).
+Plan:       POST /run-task {"plan": ["process","audit","ghost"]} scripts the LLM's response directly -- same real-call/ scripted-body pattern as agent3's FAKE_LLM, just applied to a planning decision instead of a summary. Omit it and the LLM (real, or FAKE_LLM's canned default) decides; a missing/invalid response falls back to the full plan.
+Faults:     POST /run-task {"fault": "tool_error"|"llm_error"|"agent_error"} breaks one leg live -- see README's "Fault tests".
 """
 
 import asyncio

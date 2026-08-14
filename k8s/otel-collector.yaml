@@ -1,9 +1,3 @@
-# Requires the "mcp-agent-tracing" namespace (k8s/namespace.yaml) to exist first.
-# Requires a Secret named "groundcover-token" with key "token", created out-of-band:
-#   kubectl create secret generic groundcover-token --from-literal=token='<your-groundcover-token>' -n mcp-agent-tracing
-# Requires the ConfigMap "otel-collector-config" to exist, created from otel-collector-config.yaml:
-#   kubectl create configmap otel-collector-config --from-file=config.yaml=otel-collector-config.yaml -n mcp-agent-tracing
----
 apiVersion: v1
 kind: ConfigMap
 metadata:

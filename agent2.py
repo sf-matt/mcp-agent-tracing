@@ -1,5 +1,5 @@
 """
-agent-2 -- the tool-caller
+the tool-caller
 
 Scenario:    calls a real system on agent1's behalf -- a database/API
              lookup, standing in for execute_task.

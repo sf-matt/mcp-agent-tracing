@@ -1,14 +1,3 @@
-# Update sfmatt below before applying.
-# Requires a Secret named "anthropic-api-key" with key "key", created out-of-band:
-#   kubectl create secret generic anthropic-api-key --from-literal=key='<your-anthropic-key>' -n mcp-agent-tracing
-#
-# Two namespaces: mcp-agent-tracing (agent1 orchestrator + agent3/agent3-openllmetry
-# summarizers + agent4 auditor + otel-collector) and mcp-agent-tracing-platform
-# (agent2 tool-caller + mcp-tool-server). Every object below carries its own
-# `namespace:`, so `kubectl apply -f k8s/manifests.yaml` (no -n flag) lands
-# each resource in the right place. Cross-namespace hops use FQDNs
-# (<svc>.<namespace>.svc.cluster.local); same-namespace hops use short names.
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,7 +19,6 @@ spec:
             requests: {memory: "100Mi", cpu: "50m"}
             limits: {memory: "256Mi", cpu: "500m"}
           env:
-            # Cross-namespace: otel-collector lives in mcp-agent-tracing.
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.mcp-agent-tracing.svc.cluster.local:4318"}
 ---
 apiVersion: v1
@@ -63,9 +51,7 @@ spec:
             requests: {memory: "100Mi", cpu: "50m"}
             limits: {memory: "256Mi", cpu: "500m"}
           env:
-            # Same namespace as mcp-tool-server -- short name works.
             - {name: TOOL_SERVER_URL, value: "http://mcp-tool-server:9000/mcp"}
-            # Cross-namespace: otel-collector lives in mcp-agent-tracing.
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.mcp-agent-tracing.svc.cluster.local:4318"}
 ---
 apiVersion: v1
@@ -102,9 +88,6 @@ spec:
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef: {name: anthropic-api-key, key: key, optional: true}
-            # FAKE_LLM=1: local loopback responder instead of the real
-            # Anthropic API -- remove this once the secret above is real
-            # and you want the genuine API call in the trace.
             - {name: FAKE_LLM, value: "1"}
 ---
 apiVersion: v1
@@ -133,8 +116,6 @@ spec:
         - name: agent3-openllmetry
           image: sfmatt/agent3:latest
           ports: [{containerPort: 9003}]
-          # Higher than agent3 -- traceloop-sdk imports dozens of
-          # instrumentation modules at startup.
           resources:
             requests: {memory: "256Mi", cpu: "50m"}
             limits: {memory: "512Mi", cpu: "500m"}
@@ -208,10 +189,6 @@ spec:
           resources:
             requests: {memory: "50Mi", cpu: "50m"}
             limits: {memory: "128Mi", cpu: "500m"}
-          # Deliberately no OTEL_EXPORTER_OTLP_ENDPOINT -- agent5 has no
-          # OTel code to read it anyway. ANTHROPIC_API_KEY is optional --
-          # falls back to an invalid key in-code, which still produces a
-          # real TLS request/response for the eBPF-visibility test.
           env:
             - name: ANTHROPIC_API_KEY
               valueFrom:
@@ -247,11 +224,7 @@ spec:
             requests: {memory: "100Mi", cpu: "50m"}
             limits: {memory: "256Mi", cpu: "500m"}
           env:
-            # Cross-namespace: agent2 lives in mcp-agent-tracing-platform.
-            # This is the one thing that actually changes for "going
-            # cross-ns" -- short name "agent2" would resolve to nothing.
             - {name: AGENT2_URL, value: "http://agent2.mcp-agent-tracing-platform.svc.cluster.local:9002/process"}
-            # Same namespace as agent1 -- short names work.
             - {name: AGENT3_URL, value: "http://agent3:9003/summarize"}
             - {name: AGENT3_OPENLLMETRY_URL, value: "http://agent3-openllmetry:9003/summarize"}
             - {name: AGENT4_URL, value: "http://agent4:9004/audit"}
@@ -288,10 +261,6 @@ spec:
         - name: agent6
           image: sfmatt/agent6:latest
           ports: [{containerPort: 9006}]
-          # Anthropic's own hosting guidance recommends 1Gi RAM / 1 CPU
-          # per real agent session -- this is a one-shot, no-tool demo
-          # call, not a real session, so this is deliberately lighter.
-          # Real usage would need to size to their floor, not this.
           resources:
             requests: {memory: "256Mi", cpu: "100m"}
             limits: {memory: "512Mi", cpu: "1000m"}
@@ -300,19 +269,10 @@ spec:
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef: {name: anthropic-api-key, key: key, optional: true}
-            # Alternative to ANTHROPIC_API_KEY, from `claude setup-token`
-            # -- the Agent SDK/CLI's own sanctioned headless-auth path,
-            # tied to a Claude subscription rather than console billing.
-            # Only agent6 can use this; the plain anthropic SDK agent3/
-            # agent5 use does not accept it.
             - name: CLAUDE_CODE_OAUTH_TOKEN
               valueFrom:
                 secretKeyRef: {name: claude-oauth-token, key: token, optional: true}
-            # Off by default -- matches most real deployments, and is
-            # the case bare OTel/OpenLLMetry can't see into at all. Flip
-            # to "1" to prove the CLI's own native export joins the
-            # trace (see README).
-            - {name: ENABLE_SDK_TELEMETRY, value: ""}
+            - {name: ENABLE_SDK_TELEMETRY, value: "1"}
 ---
 apiVersion: v1
 kind: Service

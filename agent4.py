@@ -1,15 +1,10 @@
 """
-agent-4 -- the auditor
+the auditor
 
-Scenario:    compliance/audit-log step, independent of whether the
-             "real" work succeeded.
-Telemetry:   hand-rolled custom spans -- no vendor SDK, no
-             auto-instrumentation beyond bare FastAPI for the inbound
-             request.
-Boundary:    none -- no outbound call.
-Note:        third instrumentation tier -- bare gets generic HTTP
-             shape, OpenLLMetry gets a full attribute set for free,
-             this shows the hand-rolled middle ground.
+Scenario:    audit-log step, independent of whether any work succeeded.
+Telemetry:   hand-rolled custom spans with no auto-instrumentation beyond bare FastAPI for the inbound request.
+Boundary:    no outbound call.
+Note:        third instrumentation tier -- bare gets generic HTTP shape, OpenLLMetry gets a full attribute set for free, this shows the hand-rolled middle ground.
 """
 
 import logging
@@ -34,11 +29,6 @@ async def audit(request: Request):
     task_id = body.get("task_id", "unknown")
     fault = body.get("fault")
 
-    # agent_error fault: unhandled 500 on purpose. agent1's _post() calls
-    # resp.json() with no status check, so this doesn't fail agent1's own
-    # request -- it's silently absorbed into agent4_call and /run-task
-    # still returns 200. The finding: a real error invisible unless you
-    # look at the content, not the status code.
     if fault == "agent_error":
         raise HTTPException(status_code=500, detail="deliberate agent4 failure for fault test")
 

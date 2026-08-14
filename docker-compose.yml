@@ -13,7 +13,7 @@ services:
   mcp-tool-server:
     build:
       context: .
-      dockerfile: Dockerfile.mcp-tool-server
+      dockerfile: docker/Dockerfile.mcp-tool-server
     ports: ["9000:9000"]
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
@@ -21,7 +21,7 @@ services:
   agent2:
     build:
       context: .
-      dockerfile: Dockerfile.agent2
+      dockerfile: docker/Dockerfile.agent2
     ports: ["9002:9002"]
     environment:
       TOOL_SERVER_URL: "http://mcp-tool-server:9000/mcp"
@@ -30,7 +30,7 @@ services:
   agent3:
     build:
       context: .
-      dockerfile: Dockerfile.agent3
+      dockerfile: docker/Dockerfile.agent3
     ports: ["9003:9003"]
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
@@ -40,7 +40,7 @@ services:
   agent3-openllmetry:
     build:
       context: .
-      dockerfile: Dockerfile.agent3
+      dockerfile: docker/Dockerfile.agent3
     ports: ["9013:9003"]
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
@@ -53,7 +53,7 @@ services:
   agent4:
     build:
       context: .
-      dockerfile: Dockerfile.agent4
+      dockerfile: docker/Dockerfile.agent4
     ports: ["9004:9004"]
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
@@ -61,14 +61,14 @@ services:
   agent5:
     build:
       context: .
-      dockerfile: Dockerfile.agent5
+      dockerfile: docker/Dockerfile.agent5
     ports: ["9005:9005"]
     # Deliberately no OTEL_EXPORTER_OTLP_ENDPOINT -- agent5 has no OTel
     # code to read it anyway.
   agent1:
     build:
       context: .
-      dockerfile: Dockerfile.agent1
+      dockerfile: docker/Dockerfile.agent1
     ports: ["9001:9001"]
     environment:
       AGENT2_URL: "http://agent2:9002/process"
@@ -83,7 +83,7 @@ services:
   agent6:
     build:
       context: .
-      dockerfile: Dockerfile.agent6
+      dockerfile: docker/Dockerfile.agent6
     ports: ["9006:9006"]
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
