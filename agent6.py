@@ -26,7 +26,7 @@ FastAPIInstrumentor.instrument_app(app)
 HTTPXClientInstrumentor().instrument()
 
 
-def _sdk_env():
+def _sdk_env(persona):
     env = {}
     if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
         env["ANTHROPIC_API_KEY"] = "sk-ant-invalid-demo-key-for-ebpf-test"
@@ -44,6 +44,7 @@ def _sdk_env():
         "OTEL_TRACES_EXPORT_INTERVAL": "1000",
         "OTEL_LOGS_EXPORT_INTERVAL": "1000",
         "OTEL_METRIC_EXPORT_INTERVAL": "1000",
+        "OTEL_SERVICE_NAME": f"agent6-{persona}",
         "OTEL_LOG_USER_PROMPTS": "1",
         "OTEL_LOG_RAW_API_BODIES": "1",
         "OTEL_LOG_TOOL_DETAILS": "1",
@@ -94,12 +95,12 @@ def _persona_prompt(name, task_id, prev_text):
     raise ValueError(name)
 
 
-async def _ask(prompt):
+async def _ask(prompt, persona):
     text_parts = []
     meta = {}
 
     async def _run():
-        options = ClaudeAgentOptions(allowed_tools=[], env=_sdk_env())
+        options = ClaudeAgentOptions(allowed_tools=[], env=_sdk_env(persona))
         async for message in query(prompt=prompt, options=options):
             if isinstance(message, AssistantMessage):
                 for block in message.content:
@@ -137,7 +138,7 @@ async def subprocess_task(request: Request):
     prev_text = None
     for name in PERSONAS:
         prompt = _persona_prompt(name, task_id, prev_text)
-        text, meta = await _ask(prompt)
+        text, meta = await _ask(prompt, name)
         chain.append({"agent": name, "text": text, **meta})
         if not text:
             break
