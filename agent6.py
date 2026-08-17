@@ -26,9 +26,16 @@ FastAPIInstrumentor.instrument_app(app)
 HTTPXClientInstrumentor().instrument()
 
 
-def _sdk_env(persona):
+def _sdk_env(persona, fault_persona=None):
     env = {}
-    if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+    if persona == fault_persona:
+        # Real auth failure, not a simulated one -- bad key, and the OAuth
+        # token blanked so it can't fall back to good auth. Same 10x
+        # exponential-backoff retry storm documented elsewhere in this demo,
+        # here reliably blowing past ASK_TIMEOUT for one persona on purpose.
+        env["ANTHROPIC_API_KEY"] = "sk-ant-invalid-demo-key-for-fault-test"
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = ""
+    elif not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
         env["ANTHROPIC_API_KEY"] = "sk-ant-invalid-demo-key-for-ebpf-test"
     if not os.environ.get("ENABLE_SDK_TELEMETRY"):
         return env
@@ -95,12 +102,12 @@ def _persona_prompt(name, task_id, prev_text):
     raise ValueError(name)
 
 
-async def _ask(prompt, persona):
+async def _ask(prompt, persona, fault_persona=None):
     text_parts = []
     meta = {}
 
     async def _run():
-        options = ClaudeAgentOptions(allowed_tools=[], env=_sdk_env(persona))
+        options = ClaudeAgentOptions(allowed_tools=[], env=_sdk_env(persona, fault_persona))
         async for message in query(prompt=prompt, options=options):
             if isinstance(message, AssistantMessage):
                 for block in message.content:
@@ -126,19 +133,21 @@ async def _ask(prompt, persona):
 async def subprocess_task(request: Request):
     body = await request.json()
     task_id = body.get("task_id", "unknown")
-    logging.info("subprocess_task started for task_id=%s", task_id)
+    fault_persona = body.get("fault")  # e.g. "manager" -- breaks just that one call
+    logging.info("subprocess_task started for task_id=%s fault=%s", task_id, fault_persona)
 
     # Five real, unscripted agent calls, chained telephone-game style --
     # each persona reacts only to the previous one's actual words.
     # Content genuinely varies every run -- this is the "show it live
     # and let it be random" case, deliberately, unlike everything else
-    # in this demo that's built for reproducibility. Stops early if any
-    # step fails to produce text -- nothing to react to otherwise.
+    # in this demo that's built for reproducibility. A real per-call
+    # timeout (fault_persona) does NOT stop the chain -- see README for
+    # why, and what that means for anything evaluating this output.
     chain = []
     prev_text = None
     for name in PERSONAS:
         prompt = _persona_prompt(name, task_id, prev_text)
-        text, meta = await _ask(prompt, name)
+        text, meta = await _ask(prompt, name, fault_persona)
         chain.append({"agent": name, "text": text, **meta})
         if not text:
             break

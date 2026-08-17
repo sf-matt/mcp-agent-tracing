@@ -8,10 +8,12 @@
 #   ./single.sh agent2
 #   ./single.sh agent3-openllmetry
 #   ./single.sh agent5 my-task-id
+#   ./single.sh agent6 my-task-id reporter|supervisor|manager|legal|support-rep   # break one persona's call
 set -uo pipefail
 
 NAME="${1:-}"
 TASK_ID="${2:-task-x}"
+FAULT_PERSONA="${3:-}"
 
 pp() { python3 -m json.tool 2>/dev/null || cat; }
 
@@ -38,7 +40,11 @@ case "$NAME" in
     ;;
   agent6)
     NS=mcp-agent-tracing; SVC=agent6; PORT=9006; ROUTE=/subprocess-task
-    BODY="{\"task_id\":\"$TASK_ID\"}"
+    if [ -n "$FAULT_PERSONA" ]; then
+      BODY="{\"task_id\":\"$TASK_ID\",\"fault\":\"$FAULT_PERSONA\"}"
+    else
+      BODY="{\"task_id\":\"$TASK_ID\"}"
+    fi
     ;;
   *)
     echo "Usage: $0 <agent2|agent3|agent3-openllmetry|agent4|agent5|agent6> [task_id]"
