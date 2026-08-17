@@ -16,7 +16,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from tracing_lib import setup_tracing
 
-SERVICE_NAME = os.environ.get("SERVICE_NAME", "agent-4")
+SERVICE_NAME = os.environ.get("SERVICE_NAME", "agent4")
 tracer = setup_tracing(SERVICE_NAME, os.environ.get("SPAN_FILE", "spans_agent4.jsonl"))
 
 app = FastAPI()

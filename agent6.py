@@ -19,7 +19,7 @@ from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage
 
 from tracing_lib import setup_tracing
 
-setup_tracing("agent-6", os.environ.get("SPAN_FILE", "spans_agent6.jsonl"))
+setup_tracing("agent6", os.environ.get("SPAN_FILE", "spans_agent6.jsonl"))
 
 app = FastAPI()
 FastAPIInstrumentor.instrument_app(app)
@@ -145,7 +145,7 @@ async def subprocess_task(request: Request):
 
     logging.info("subprocess_task complete: %s", [c["text"] for c in chain])
     return {
-        "agent": "agent-6",
+        "agent": "agent6",
         "task_id": task_id,
         "chain": chain,
         "telemetry_enabled": bool(os.environ.get("ENABLE_SDK_TELEMETRY")),

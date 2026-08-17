@@ -47,7 +47,7 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       FAKE_LLM: "${FAKE_LLM:-}"
       ENABLE_OPENLLMETRY: "1"
-      SERVICE_NAME: "agent-3-openllmetry"
+      SERVICE_NAME: "agent3-openllmetry"
       SPAN_FILE: "spans_agent3_openllmetry.jsonl"
     depends_on: [otel-collector]
   agent4:

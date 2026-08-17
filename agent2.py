@@ -20,7 +20,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from tracing_lib import setup_tracing
 
-setup_tracing("agent-2", os.environ.get("SPAN_FILE", "spans_agent2.jsonl"))
+setup_tracing("agent2", os.environ.get("SPAN_FILE", "spans_agent2.jsonl"))
 
 app = FastAPI()
 FastAPIInstrumentor.instrument_app(app)
@@ -55,7 +55,7 @@ async def process(request: Request):
                 tool_error = True
 
     logging.info("process complete: %s (tool_error=%s)", result_text, tool_error)
-    return {"agent": "agent-2", "query": query, "tool_result": result_text, "tool_error": tool_error}
+    return {"agent": "agent2", "query": query, "tool_result": result_text, "tool_error": tool_error}
 
 
 if __name__ == "__main__":

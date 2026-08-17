@@ -123,7 +123,7 @@ Fan-out is a plan, then two concurrent phases, not five independent calls: `agen
 
 `agent1`'s downstream `POST` spans to agent2/agent3/agent3-openllmetry/agent4 all share the same `parent_id`. They are true siblings under `agent1`'s root `POST /run-task` span, and one `trace_id` spans all five services across both namespaces. `agent5` gets the same real call, same `traceparent`, same concurrent phase, but never reports back into that trace.
 
-The plan genuinely changes the trace's shape, not just the response body. Two real calls, one with the default plan and one with `{"plan": ["process","ghost"]}`: the default trace has three `agent-4` spans (`POST /audit`, `audit.record_decision`, plus HTTP framing); the overridden trace has zero `agent-4` spans anywhere -- `agent1`'s planning call (a real `POST` to `/v1/messages`, same bare-OTel tier as the rest of `agent1`) is what decided that before the fan-out ever started.
+The plan genuinely changes the trace's shape, not just the response body. Two real calls, one with the default plan and one with `{"plan": ["process","ghost"]}`: the default trace has three `agent4` spans (`POST /audit`, `audit.record_decision`, plus HTTP framing); the overridden trace has zero `agent4` spans anywhere -- `agent1`'s planning call (a real `POST` to `/v1/messages`, same bare-OTel tier as the rest of `agent1`) is what decided that before the fan-out ever started.
 
 ## Fault tests: what actually breaking things looks like
 
@@ -211,7 +211,7 @@ eBPF's floor is lower here than anywhere else in this demo. It captures the DNS 
 
 The CLI ships its own native OTel export -- `ENABLE_SDK_TELEMETRY=1` here, which sets `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_TRACES_EXPORTER=otlp`, and `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`, required for traces specifically. On by default in this deployment. When on, it genuinely joins the parent trace -- confirmed with real parent-child span IDs from the live deployment, not inferred: `claude_code.interaction`'s `parent_id` is `agent6`'s own root span ID, same `trace_id`, two `service.name`s cooperating correctly. Confirmed on both a deliberately-invalid-key failure and, separately, a genuinely successful call authenticated via `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) -- the join holds on both the failure and success path.
 
-Three different `workload` names exist for this one pod's activity -- `agent6` (eBPF, from the k8s object name), `agent-6` (this process's own OTel `service.name`), and `claude-code` (the subprocess's OTel `service.name`, Anthropic's default). Same naming split every other agent has between its eBPF and OTel identity, just three-way here instead of two.
+Two different `workload` names exist for this one pod's activity -- `agent6` (both eBPF, from the k8s object name, and this process's own OTel `service.name`, deliberately aligned to match) and `claude-code` (the subprocess's own OTel `service.name`, Anthropic's default -- not ours to rename). It used to be three, one per agent in this build, until noticing the OTel identity had drifted a hyphen away from the k8s name everywhere -- see "agent4: the third tier" below for how that surfaced.
 
 Content is redacted by default even with the CLI's native telemetry on -- the spans and log events show up, but every field that would hold the actual prompt/response text is empty. Four separate opt-ins turn it back on: `OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_RAW_API_BODIES`, `OTEL_LOG_TOOL_DETAILS`, `OTEL_LOG_TOOL_CONTENT` (on by default in this deployment, demo-only -- not something to default on for a real one). With them set, the content still doesn't land where you'd first look: `gen_ai_input_messages`/`gen_ai_output_messages` on the trace spans stay empty regardless, and the log events' own `body` field is also empty. The real text is in plain, differently-named fields per event -- `claude_code.user_prompt` logs carry it in `prompt`, `claude_code.assistant_response` logs carry it in `response` -- confirmed directly against a live call, five personas' worth of actual absurd text queryable in groundcover by `trace_id`/`session.id`. Bonus finding surfaced by finally seeing the content: the haiku "standalone" call each turn isn't a second response at all, it's a title classifier -- its `response` is a bare `{"title": "..."}` -- while the sonnet-5 `interaction` call carries the real persona text.
 
@@ -255,11 +255,17 @@ curl -X POST http://127.0.0.1:19001/run-task -d '{"plan": ["process", "ghost"]}'
 
 Local port is non-standard (19001) to avoid colliding with anything else bound to 9001.
 
-Run `./scripts/demo.sh` (with that port-forward active) to step through the fault battery and the plan-override reveal one call at a time, pausing between each -- built for walking through live rather than typing curl commands on stage.
+### Which script do I run?
 
-For plain, no-fault calls -- narrating through the code, or firing the same call repeatedly to show real-key non-determinism -- use `./scripts/call.sh` (one call) or `./scripts/call.sh 5` (five calls, pausing between each).
+All three are just wrappers around `curl` -- nothing here needs memorizing.
 
-To spotlight one agent in isolation -- bypassing `agent1`'s fan-out entirely, so the trace has no siblings -- use `./scripts/single.sh <agent2|agent3|agent3-openllmetry|agent4|agent5|agent6>`. It manages its own port-forward (starts it, makes the call, tears it down), so each tier is one command during a code walkthrough.
+| Script | What it does | Use it when |
+|---|---|---|
+| `./scripts/call.sh` | One plain call to agent1's `/run-task`, no faults. `./scripts/call.sh 5` repeats it 5 times, pausing between each. | You want a clean trace, or want to show a real key producing a different summary/plan every run. |
+| `./scripts/demo.sh` | Walks agent1 through the whole demo in order, pausing for you between steps: happy path, then each fault (`tool_error`, `llm_error`, `agent_error`), then the plan-override reveal. At the end it *prints* (doesn't run) the two steps that need real infra changes: the `kubectl scale` network failure, and the agent6 call. | You're presenting live and want a guided script instead of typing faults by hand. |
+| `./scripts/single.sh <agent>` | Calls **one** agent directly -- `agent2`, `agent3`, `agent3-openllmetry`, `agent4`, `agent5`, or `agent6` -- skipping agent1's fan-out entirely, so the trace has just that one agent's own hop. Manages its own port-forward. | You want to zoom in on one instrumentation tier by itself, e.g. mid code-walkthrough. |
+
+Under the hood, a "fault" is nothing more than `{"fault": "<name>"}` in agent1's POST body -- see "Fault tests" below for exactly what each one breaks and where it shows up in the trace.
 
 ## Tracing: OTLP by default, JSON file as fallback
 
@@ -318,6 +324,10 @@ audit.reviewer: agent-4-automated
 ```
 
 The spectrum in one trace: bare auto-instrument gets generic HTTP shape; OpenLLMetry gets a comprehensive vendor-standard attribute set for free; hand-rolling gets exactly what you decided mattered.
+
+The span only exists if the code reaches it. `{"fault": "agent_error"}` raises before the `with tracer.start_as_current_span(...)` block ever runs -- confirmed directly against a live fault call: the auto-instrumented `POST /audit` span still shows up (`status: error`, `500`, it wraps the whole handler unconditionally), but `audit.record_decision` is absent entirely, not error-flagged, just never created. Auto-instrumentation is as reliable as the framework; hand-rolled is exactly as reliable as your own control flow.
+
+Also caught live while checking this: `audit.record_decision` filed under `workload: agent-4` while the auto-instrumented `POST /audit` span filed under `workload: agent4` -- eBPF's workload name comes from the k8s object, this process's OTel `service.name` was a separate hardcoded string that had drifted a hyphen away from it. Querying the wrong one made a real span look missing. Fixed by aligning every agent's OTel `service.name` to its k8s object name exactly (`agent1.py`-`agent4.py`, `agent6.py`) -- but it's worth remembering as a general hazard, not just a one-time bug: any two systems deriving a service's identity independently (k8s object metadata via eBPF vs. a string in application code) can silently disagree, and nothing forces them back into agreement unless someone checks.
 
 ## FAKE_LLM: a real fallback, not a code-level mock
 

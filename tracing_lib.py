@@ -1,20 +1,11 @@
 """
 Shared tracing setup for every service in this demo.
 
-Default export target is OTLP (OTEL_EXPORTER_OTLP_ENDPOINT), pointed at
-the otel-collector. If unset, falls back to writing spans to a
-JSON-lines file per process -- useful for local debugging without a
-collector, and for comparing trace_ids across processes by hand.
+Default export target is OTLP (OTEL_EXPORTER_OTLP_ENDPOINT), pointed at the otel-collector. 
 
-ENABLE_OPENLLMETRY layers OpenLLMetry (traceloop-sdk) onto the SAME
-TracerProvider set up below: Traceloop.init() attaches its own span
-processor to the existing provider instead of creating a new one, and
-passing our own OTLPSpanExporter into it stops it from defaulting to
-Traceloop's SaaS endpoint.
+ENABLE_OPENLLMETRY layers OpenLLMetry (traceloop-sdk) onto the same TracerProvider set up below: Traceloop.init() attaches its own span processor to the existing provider instead of creating a new one, and passing our own OTLPSpanExporter into it.
 
-Logs (when OTLP is set) go through the OTel SDK's LoggingHandler,
-bridging stdlib logging to an OTLP log exporter -- log lines auto-
-correlate with the active span's trace_id, no extra wiring needed.
+Logs (when OTLP is set) go through the OTel SDK's LoggingHandler, bridging stdlib logging to an OTLP log exporter. Log lines auto-correlate with the active span's trace_id.
 """
 
 import json

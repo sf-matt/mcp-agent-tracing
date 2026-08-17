@@ -21,7 +21,7 @@ from anthropic import AsyncAnthropic
 
 from tracing_lib import setup_tracing
 
-SERVICE_NAME = os.environ.get("SERVICE_NAME", "agent-3")
+SERVICE_NAME = os.environ.get("SERVICE_NAME", "agent3")
 setup_tracing(SERVICE_NAME, os.environ.get("SPAN_FILE", "spans_agent3.jsonl"))
 
 app = FastAPI()

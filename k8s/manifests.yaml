@@ -122,7 +122,7 @@ spec:
           env:
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
             - {name: ENABLE_OPENLLMETRY, value: "1"}
-            - {name: SERVICE_NAME, value: "agent-3-openllmetry"}
+            - {name: SERVICE_NAME, value: "agent3-openllmetry"}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef: {name: anthropic-api-key, key: key, optional: true}

@@ -24,7 +24,7 @@ from anthropic import AsyncAnthropic
 
 from tracing_lib import setup_tracing
 
-setup_tracing("agent-1", os.environ.get("SPAN_FILE", "spans_agent1.jsonl"))
+setup_tracing("agent1", os.environ.get("SPAN_FILE", "spans_agent1.jsonl"))
 
 app = FastAPI()
 FastAPIInstrumentor.instrument_app(app)
@@ -39,10 +39,7 @@ AGENT5_URL = os.environ.get("AGENT5_URL", "http://127.0.0.1:9005/ghost-task")
 TASK_ID = "task-x"
 DEFAULT_PLAN = ["process", "audit", "ghost"]
 
-_scripted_plan = DEFAULT_PLAN  # read by the fake handler below, set right
-# before each planning call. Not thread-safe against concurrent
-# requests -- same caveat as agent3's fault flag, fine for one demo
-# request at a time.
+_scripted_plan = DEFAULT_PLAN 
 
 if os.environ.get("FAKE_LLM"):
     class _FakePlannerHandler(BaseHTTPRequestHandler):
@@ -111,7 +108,6 @@ async def run_task(request: Request):
     logging.info("plan decided: %s", plan)
 
     async with httpx.AsyncClient() as client:
-        # phase 1: independent calls; agent2 (if planned) feeds phase 2.
         agent2_result = agent4_result = agent5_result = None
         phase1 = []
         if "process" in plan:
@@ -129,7 +125,6 @@ async def run_task(request: Request):
             agent5_result = phase1_results.get("agent5")
         logging.info("phase 1 complete: agent2=%s agent4=%s agent5=%s", agent2_result, agent4_result, agent5_result)
 
-        # phase 2: only if agent2 actually ran -- nothing to summarize otherwise.
         agent3_result = agent3_oll_result = None
         if agent2_result is not None:
             summarize_text = f"tool result for {TASK_ID}: {agent2_result.get('tool_result')}"
